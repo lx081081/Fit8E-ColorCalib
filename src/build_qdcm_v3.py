@@ -26,6 +26,7 @@ import subprocess
 import shlex
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 D65 = [95.045471, 100.0, 108.905029]
 M_SRGB = [
@@ -54,6 +55,8 @@ def mat_inv(M):
     d, e, f = M[1]
     g, h, i = M[2]
     det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+    if not math.isfinite(det) or abs(det) < 1e-14:
+        raise ValueError("The measured primaries do not define an invertible RGB matrix.")
     return [
         [(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det],
         [(f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det],
@@ -315,20 +318,20 @@ def build_hdr_blob(L_max: float, L_knee: float, L_min: float) -> dict:
     return {"blob": xml}
 
 
-def generate_qdcm_v3(
-    ti3_path: Path,
-    template_path: Path,
-    out_path: Path,
-    panel_key: str = "ar14_1080p_144hz_video_mode_dsi_panel",
-    gamma_nudge: float = 1.0,
-    cl_gain: tuple[float, float, float] = (1.0, 1.0, 1.0),
-    hdr_peak: float = 447.0,
-    hdr_knee: float = 280.0,
-    hdr_min: float = 0.37,
-    verify_ti3: Path | None = None,
-) -> None:
-    verify_rows = load_ti3(verify_ti3) if verify_ti3 is not None else None
-    rows = load_ti3(ti3_path)
+class PanelResponse(NamedTuple):
+    black: list[float]
+    white: list[float]
+    matrix: list[list[float]]
+    inverse: list[list[float]]
+    levels: list[float]
+    channel_curves: list[list[float]]
+    luminance_curve: list[float]
+
+
+def characterize_panel(rows: list[list[float]], cl_gain: tuple[float, float, float] = (1., 1., 1.)) -> PanelResponse:
+    """Fit black, additive primary matrices and neutral tone curves in the measurement observer."""
+    if len(cl_gain) != 3 or any(not math.isfinite(v) or v <= 0 for v in cl_gain):
+        raise ValueError("Closed-loop RGB gains must be finite and positive.")
     blacks = [r for r in rows if r[1] == 0 and r[2] == 0 and r[3] == 0]
     whites = [r for r in rows if abs(r[1] - 100) < 1e-3 and abs(r[2] - 100) < 1e-3 and abs(r[3] - 100) < 1e-3]
     reds   = [r for r in rows if abs(r[1] - 100) < 1e-3 and r[2] == 0 and r[3] == 0]
@@ -349,6 +352,8 @@ def generate_qdcm_v3(
         [R_xyz[2] - K_xyz[2], G_xyz[2] - K_xyz[2], B_xyz[2] - K_xyz[2]],
     ]
     W_net = [W_xyz[i] - K_xyz[i] for i in range(3)]
+    if W_net[1] <= 0:
+        raise ValueError("Measured white luminance must exceed measured black luminance.")
     s_prim = mat_vec(mat_inv(M_raw), W_net)
 
     # Unscaled panel matrix for clean per-channel TRC extraction
@@ -388,6 +393,29 @@ def generate_qdcm_v3(
     for i in range(1, len(trc_y_lum)):
         if trc_y_lum[i] <= trc_y_lum[i - 1]:
             trc_y_lum[i] = trc_y_lum[i - 1] + 1e-6
+
+    return PanelResponse(K_xyz, W_xyz, M_panel, M_panel_inv, trc_x, trc_y, trc_y_lum)
+
+
+def generate_qdcm_v3(
+    ti3_path: Path,
+    template_path: Path,
+    out_path: Path,
+    panel_key: str = "ar14_1080p_144hz_video_mode_dsi_panel",
+    gamma_nudge: float = 1.0,
+    cl_gain: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    hdr_peak: float = 447.0,
+    hdr_knee: float = 280.0,
+    hdr_min: float = 0.37,
+    verify_ti3: Path | None = None,
+) -> None:
+    if not all(math.isfinite(v) for v in (gamma_nudge, hdr_peak, hdr_knee, hdr_min)) or not (
+            gamma_nudge > 0 and 0 <= hdr_min < hdr_knee < hdr_peak):
+        raise ValueError("Use a positive gamma adjustment and finite 0 <= black < knee < peak.")
+    verify_rows = load_ti3(verify_ti3) if verify_ti3 is not None else None
+    rows = load_ti3(ti3_path)
+    response = characterize_panel(rows, cl_gain)
+    K_xyz, _, M_panel, M_panel_inv, trc_x, trc_y, trc_y_lum = response
 
     # 1. HPM PostBlendIGC (385 entries, 16-bit 0..65535)
     def igc_curve(x: float) -> float:

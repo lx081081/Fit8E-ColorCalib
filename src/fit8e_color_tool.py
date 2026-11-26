@@ -65,25 +65,27 @@ STRINGS = {
         "btn_reset_profile": "恢复默认",
         "chk_force": "已手动核实 ar14 面板",
         "lbl_profile": "校色档案：",
-        "lbl_cct": "白点色温",
+        "lbl_cct": "白点色温 · CIE 2015 2°",
         "lbl_warm": "5500K 暖",
         "lbl_cool": "7500K 冷",
         "lbl_tint": "红绿微调",
         "tint_zero": "0 中性",
         "tint_mag": "{v} 偏品红",
         "tint_grn": "+{v} 偏绿",
-        "bright_chip": "峰值保留 {pct}%",
+        "bright_chip": "预计亮度保留 {pct}%",
         "preset_6000": "6000K 暖色",
-        "preset_6500": "6500K 标准",
+        "preset_6500": "6500K D65",
         "preset_6800": "6800K 微冷",
         "preset_7100": "7100K 冷白",
-        "profile_builtin_d65": "内置公版（6500K D65 实测验证 · ΔE 0.46）",
-        "profile_builtin_tuned": "内置公版（实时硬件编译 · {cct}K · 色调 {tint}）",
+        "profile_builtin_d65": "实测 D65（CIE 2015 2° · 6500 K）",
+        "profile_builtin_tuned": "CIE 2015 2° 日光（{cct} K · 色调 {tint}）",
         "st_disconnected": "未检测到设备 · 请开启 USB 调试并连接数据线",
         "st_offline": "设备离线 (offline) · 请解锁屏幕后重插 USB 线或重开 USB 调试",
         "st_unauthorized": "等待授权 · 请在掌机屏幕上点击「允许 USB 调试」",
         "st_active": "已安装并生效",
         "st_reboot_needed": "已安装，重启后生效",
+        "st_unconfirmed": "档案已安装 · 生效待确认",
+        "wp_from_file": "使用文件内的白点",
         "st_stock": "原厂未校色",
         "st_system_managed": "系统仍报告色彩管理模式",
         "st_wrong_model": "机型不匹配",
@@ -92,11 +94,11 @@ STRINGS = {
         "st_panel_mismatch": "Fit 8E · 面板不匹配",
         "badge_rec": "推荐",
         "mode_0_title": "自然标准",
-        "mode_0_desc": "sRGB 精准缩限 (ΔE 0.46)\nP3 与 HDR10 PQ 自动切换",
+        "mode_0_desc": "SDR 使用 sRGB 或 Display P3\nHDR10 使用 PQ 高光映射",
         "mode_1_title": "增强模式",
-        "mode_1_desc": "sRGB 基准 +10% 饱和度\n标准白点均衡输出",
+        "mode_1_desc": "提高画面饱和度\n标准白点均衡输出",
         "mode_2_title": "鲜艳模式",
-        "mode_2_desc": "原生 98% P3 广色域\n精准白点 + Gamma 2.2",
+        "mode_2_desc": "面板原生广色域\n使用所选白点",
         "mode_active_tag": "当前生效",
         "confirm_install_title": "确认安装硬件校色",
         "confirm_install_msg": (
@@ -122,6 +124,9 @@ STRINGS = {
             "为防止显示异常已中止操作。"
         ),
         "msg_done_install_reboot": "安装完成并已发送重启指令！\n重启解锁进入桌面后，原生硬件色彩管理与新色温即自动生效。",
+        "err_calibration_busy": "掌机正在执行另一个校色操作，请稍后刷新再试。",
+        "err_calibration_lock": "掌机无法使用校色锁。",
+        "err_profile_timeout": "等待掌机返回校色结果超时（{seconds} 秒）。掌机可能仍在处理校色档，请稍后刷新并核对当前档案，再决定是否重试。",
         "msg_done_install_only": "安装完成（SHA-256 校验一致）！\n请手动重启掌机，开机后即自动生效。",
         "msg_no_install": "设备上没有已安装的校色档。",
         "msg_done_uninstall": "已恢复原有档案及显示模式，并发送重启指令。",
@@ -145,25 +150,27 @@ STRINGS = {
         "btn_reset_profile": "Reset Default",
         "chk_force": "I verified the ar14 panel",
         "lbl_profile": "Profile:",
-        "lbl_cct": "Whitepoint CCT",
+        "lbl_cct": "White point · CIE 2015 2°",
         "lbl_warm": "5500K Warm",
         "lbl_cool": "7500K Cool",
         "lbl_tint": "Green/Magenta Tint",
         "tint_zero": "0 Neutral",
         "tint_mag": "{v} Magenta",
         "tint_grn": "+{v} Green",
-        "bright_chip": "Peak {pct}%",
+        "bright_chip": "Estimated output {pct}%",
         "preset_6000": "6000K Warm",
         "preset_6500": "6500K D65",
         "preset_6800": "6800K Crisp",
         "preset_7100": "7100K Cool",
-        "profile_builtin_d65": "Built-in Verified D65 (6500K · ΔE 0.46)",
-        "profile_builtin_tuned": "Built-in Hardware Compiled ({cct}K · Tint {tint})",
+        "profile_builtin_d65": "Measured D65 (CIE 2015 2° · 6500 K)",
+        "profile_builtin_tuned": "CIE 2015 2° daylight ({cct} K · tint {tint})",
         "st_disconnected": "No device detected · Enable USB Debugging and connect via USB",
         "st_offline": "Device offline · Unlock screen & replug USB cable (or toggle USB Debugging)",
         "st_unauthorized": "Unauthorized · Tap 'Allow USB debugging' on handheld screen",
         "st_active": "Installed & Active",
         "st_reboot_needed": "Installed · Reboot Required",
+        "st_unconfirmed": "Installed · Activation Unconfirmed",
+        "wp_from_file": "White point from file",
         "st_stock": "Stock (Uncalibrated)",
         "st_system_managed": "System reports managed color modes",
         "st_wrong_model": "Device model mismatch",
@@ -172,11 +179,11 @@ STRINGS = {
         "st_panel_mismatch": "Fit 8E · Panel mismatch",
         "badge_rec": "Rec.",
         "mode_0_title": "Natural",
-        "mode_0_desc": "Accurate sRGB clamp (ΔE 0.46)\nAuto Display P3 & HDR10 PQ",
+        "mode_0_desc": "SDR in sRGB or Display P3\nHDR10 with PQ tone mapping",
         "mode_1_title": "Boosted",
-        "mode_1_desc": "sRGB base +10% saturation\nBalanced calibrated whitepoint",
+        "mode_1_desc": "Increased saturation\nBalanced calibrated whitepoint",
         "mode_2_title": "Vivid",
-        "mode_2_desc": "Full native 98% P3 gamut\nCalibrated whitepoint + Gamma 2.2",
+        "mode_2_desc": "Native wide gamut\nUses the selected white point",
         "mode_active_tag": "Active",
         "confirm_install_title": "Confirm Calibration Install",
         "confirm_install_msg": (
@@ -202,6 +209,9 @@ STRINGS = {
             "Operation aborted to protect your display."
         ),
         "msg_done_install_reboot": "Calibration installed and reboot triggered!\nUnlock after boot and hardware color management will be live.",
+        "err_calibration_busy": "Another calibration operation is running. Wait, then refresh.",
+        "err_calibration_lock": "The handheld could not use its calibration lock.",
+        "err_profile_timeout": "Timed out after {seconds} seconds waiting for the handheld. It may still be processing the profile. Refresh and check the installed profile before retrying.",
         "msg_done_install_only": "Calibration installed (SHA-256 verified)!\nPlease reboot your handheld to activate.",
         "msg_no_install": "No installed calibration profile.",
         "msg_done_uninstall": "Previous calibration and display mode restored. Reboot requested.",
@@ -239,9 +249,27 @@ def find_default_json() -> Optional[Path]:
     for root in get_resource_roots():
         for rel in (Path("assets") / PANEL_FILENAME, Path(PANEL_FILENAME)):
             p = root / rel
-            if p.is_file():
-                return p
+            try:
+                if p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest() == color_engine.D65_PROFILE_SHA256:
+                    return p
+            except OSError:
+                continue
     return None
+
+
+def export_profile(base: Path, destination: Path, cct: int, tint: int):
+    if destination.resolve() == base.resolve() or (destination.exists() and destination.samefile(base)):
+        raise ValueError("Choose an export path separate from the built-in calibration JSON.")
+    raw, preview = color_engine.synthesize_qdcm_bytes(base, cct, tint)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as staged:
+        temp_path = Path(staged.name)
+    try:
+        temp_path.write_bytes(raw)
+        temp_path.replace(destination)
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return len(raw), preview
 
 
 def find_app_icon() -> Optional[Path]:
@@ -316,6 +344,7 @@ class DeviceStatus:
     sf_active_mode: str = ""
     sf_color_modes: list[str] = field(default_factory=list)
     sys_color_mode: Optional[int] = None
+    activation: str = ""
     installed_data: bool = False
     installed_data_md5: str = ""
     has_root_tool: str = ""
@@ -338,7 +367,9 @@ class DeviceStatus:
 
 
 class AdbClient:
-    def __init__(self, log_fn: Optional[Callable[[str], None]] = None, serial: Optional[str] = None):
+    def __init__(self, log_fn: Optional[Callable[[str], None]] = None, serial: Optional[str] = None,
+                 *, language: str = "en"):
+        self.language = language
         self.adb = find_adb()
         self.log_fn = log_fn or (lambda _msg: None)
         self.serial = serial or os.environ.get("ANDROID_SERIAL")
@@ -377,7 +408,16 @@ class AdbClient:
             if root not in ("su", "xsu"):
                 return 1, "", "Unrecognized root command"
             command = shlex.join([root, "-c", command])
-        return self.run(["shell", "-T", command], 40, serial=serial, stdin=script)
+        profile_operation = args[0] in ("install", "uninstall")
+        timeout = 120 if profile_operation else 40
+        rc, out, err = self.run(["shell", "-T", command], timeout, serial=serial, stdin=script)
+        if rc == 124 and profile_operation:
+            err = STRINGS[self.language]["err_profile_timeout"].format(seconds=timeout)
+        elif rc == 5:
+            err = STRINGS[self.language]["err_calibration_busy"]
+        elif rc == 6:
+            err = STRINGS[self.language]["err_calibration_lock"] + " " + err.strip()
+        return rc, out, err
 
     def restart_server(self) -> None:
         self.log("[ADB] Restarting adb server...")
@@ -404,6 +444,7 @@ class AdbClient:
         st.build_id = fields.get("BUILD", "")
         st.panel_mode = fields.get("PANEL", "")
         st.panel_state = fields["PANEL_STATE"]
+        st.activation = fields.get("ACTIVATION", "")
         st.panel_source = fields.get("PANEL_SOURCE", "")
         st.panel_timing = fields.get("PANEL_TIMING", "")
         st.hardware_ok = fields.get("HARDWARE_OK") == "1"
@@ -706,7 +747,7 @@ def launch_gui(serial: Optional[str] = None) -> int:
             self.active_mode_id: Optional[int] = None
             self.status = DeviceStatus()
             self.log_q: queue.Queue[str] = queue.Queue()
-            self.client = AdbClient(log_fn=self._enqueue_log, serial=serial)
+            self.client = AdbClient(log_fn=self._enqueue_log, serial=serial, language=self.lang)
 
             self.cct_var = tk.IntVar(value=6500)
             self.tint_var = tk.IntVar(value=0)
@@ -1089,6 +1130,7 @@ def launch_gui(serial: Optional[str] = None) -> int:
             if self.is_custom_json:
                 return
             self.cct_var.set(cct)
+            self.tint_var.set(0)
             self._on_wp_change()
 
         def _format_tint(self, tint: int) -> str:
@@ -1103,13 +1145,14 @@ def launch_gui(serial: Optional[str] = None) -> int:
             tint = int(self.tint_var.get())
             prev = color_engine.estimate_whitepoint_preview(cct, tint)
 
-            self.lbl_cct_val.configure(text=f"{cct}K")
-            self.lbl_tint_val.configure(text=self._format_tint(tint))
-            self.lbl_bright_chip.configure(text=self.t("bright_chip").format(pct=prev["brightness_pct"]))
-            self.swatch_box.configure(bg=prev["swatch"])
+            custom = self.is_custom_json
+            self.lbl_cct_val.configure(text="—" if custom else f"{cct}K")
+            self.lbl_tint_val.configure(text="—" if custom else self._format_tint(tint))
+            self.lbl_bright_chip.configure(text=self.t("wp_from_file") if custom else self.t("bright_chip").format(pct=prev["brightness_pct"]))
+            self.swatch_box.configure(bg=C_SUB if custom else prev["swatch"])
 
             for pv, (wrap, btn, _pk) in self.preset_widgets.items():
-                if not self.is_custom_json and cct == pv:
+                if not custom and cct == pv and tint == 0:
                     wrap.configure(bg=C_BLUE_BD)
                     btn.configure(bg=C_BLUE_BG, fg=C_BLUE_TX, font=(FONT_UI, 8, "bold"))
                 else:
@@ -1165,6 +1208,7 @@ def launch_gui(serial: Optional[str] = None) -> int:
 
         def _toggle_lang(self) -> None:
             self.lang = "en" if self.lang == "zh" else "zh"
+            self.client.language = self.lang
             self.title(self.t("win_title"))
             self.lbl_title.configure(text=self.t("title"))
             self.lbl_sub.configure(text=self.t("subtitle"))
@@ -1231,8 +1275,7 @@ def launch_gui(serial: Optional[str] = None) -> int:
             if not out_path:
                 return
             try:
-                raw, _ = color_engine.synthesize_qdcm_bytes(self.default_json, cct=cct, tint=tint)
-                Path(out_path).write_bytes(raw)
+                export_profile(self.default_json, Path(out_path), cct, tint)
                 self._enqueue_log(f"[Export] Saved {cct}K / Tint {tint:+d} -> {out_path}")
                 messagebox.showinfo("OK", self.t("msg_done_export").format(cct=cct, tint=tint, path=out_path))
             except Exception as exc:
@@ -1323,11 +1366,13 @@ def launch_gui(serial: Optional[str] = None) -> int:
                 self.status_pill.configure(text=self.t(st.target_issue), bg=C_AMBER_BG, fg=C_AMBER_TX)
             elif st.target_issue:
                 self.status_pill.configure(text=self.t(st.target_issue), bg=C_RED_BG, fg=C_RED_TX)
-            elif has_calibrated_modes and st.installed_data:
+            elif st.installed_data and st.activation == "rebooted" and has_calibrated_modes:
                 self.status_pill.configure(text=f"● {self.t('st_active')}", bg=C_GREEN_BG, fg=C_GREEN_TX)
                 self._enqueue_log(f"Connected {st.model} · {st.sf_color_setting} / {st.sf_active_mode} · MD5 {st.installed_data_md5[:8]}")
-            elif st.installed_data and not has_calibrated_modes:
+            elif st.installed_data and st.activation == "pending":
                 self.status_pill.configure(text=f"● {self.t('st_reboot_needed')}", bg=C_AMBER_BG, fg=C_AMBER_TX)
+            elif st.installed_data:
+                self.status_pill.configure(text=self.t("st_unconfirmed"), bg=C_AMBER_BG, fg=C_AMBER_TX)
             elif has_calibrated_modes:
                 self.status_pill.configure(text=f"● {self.t('st_system_managed')}", bg=C_GREEN_BG, fg=C_GREEN_TX)
             else:
@@ -1512,10 +1557,12 @@ def run_cli(argv: list[str]) -> int:
         if not base:
             print(f"ERROR: Could not find default {PANEL_FILENAME}", file=sys.stderr)
             return 2
-        raw, prev = color_engine.synthesize_qdcm_bytes(base, cct=args.cct, tint=args.tint)
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_bytes(raw)
-        print(f"Exported {args.cct}K / Tint {args.tint:+d} (peak {prev['brightness_pct']}%) -> {args.out} ({len(raw)} bytes)")
+        try:
+            size, prev = export_profile(base, args.out, args.cct, args.tint)
+        except (OSError, ValueError) as exc:
+            print(f"Export failed: {exc}", file=sys.stderr)
+            return 2
+        print(f"Exported {args.cct}K / Tint {args.tint:+d} (peak {prev['brightness_pct']}%) -> {args.out} ({size} bytes)")
         return 0
 
     client = AdbClient(log_fn=print, serial=args.serial)
@@ -1537,6 +1584,7 @@ def run_cli(argv: list[str]) -> int:
             print(f"Build:           {st.build_id}")
             print(f"Target Match:    {st.is_target_device}")
             print(f"Installed JSON:  {st.installed_data} (MD5={st.installed_data_md5 or '-'})")
+            print(f"Activation:      {st.activation or 'unconfirmed'}")
             print(f"Color Mgmt:      {st.sf_color_setting} | Active: {st.sf_active_mode}")
             print(f"Modes Exposed:   {', '.join(st.sf_color_modes)}")
             print(f"Sys Color Mode:  {st.sys_color_mode}")

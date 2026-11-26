@@ -1,0 +1,66 @@
+{
+  "reference_white_xy": [
+    0.3134524493261819,
+    0.33080182802444436
+  ],
+  "profile_sha256": "afb9547872edc21799b17d6e90f5df704cf4c3be069c1c893354210e4c28e8b6",
+  "factory_2015": {
+    "file": "stock-srgb51-2015.ti3",
+    "sha256": "470364f608f78f19a6efa9a68925ddd9c7cedcf6f3b8d68ff8d4762bb906c231",
+    "patches": 51,
+    "white_xy": [
+      0.3135656200017661,
+      0.34597315058306166
+    ],
+    "white_Y_cd_m2": 211.9618,
+    "black_Y_cd_m2": 0.136168,
+    "black_to_white_contrast": 1556.619763821162,
+    "white_delta_uv1976": 0.00954732915808542,
+    "gray_20_to_100_mean_delta_uv1976": 0.006853036082098741,
+    "gray_20_to_100_max_delta_uv1976": 0.00954732915808542,
+    "gray_20_to_100_mean_abs_relative_Y_error": 0.019029767216670122
+  },
+  "calibrated_2015": {
+    "file": "verify2015.ti3",
+    "sha256": "576edee344d3e680f00866e1c57231b5872051854cf10f94a72d3b6ca9f3e85a",
+    "patches": 51,
+    "white_xy": [
+      0.3132677979552048,
+      0.33100143999174575
+    ],
+    "white_Y_cd_m2": 191.2004,
+    "black_Y_cd_m2": 0.141162,
+    "black_to_white_contrast": 1354.4750003542028,
+    "white_delta_uv1976": 0.00021724464917276354,
+    "gray_20_to_100_mean_delta_uv1976": 0.0005503092388067163,
+    "gray_20_to_100_max_delta_uv1976": 0.0014679902216871463,
+    "gray_20_to_100_mean_abs_relative_Y_error": 0.0020733924879077015
+  },
+  "calibrated_1931_sRGB_crosscheck": {
+    "file": "verify1931.ti3",
+    "sha256": "70b9e4bf8cb595fd8369c231464cb39b628437e773a16108e182abcd34373ff5",
+    "patches": 51,
+    "white_xy": [
+      0.3088085563246341,
+      0.32312123829940026
+    ],
+    "white_Y_cd_m2": 181.7809,
+    "black_Y_cd_m2": 0.134089,
+    "black_to_white_contrast": 1355.6734706053442,
+    "white_delta_uv1976": 0.0003321292398527729,
+    "gray_20_to_100_mean_delta_uv1976": 0.0006615148133778588,
+    "gray_20_to_100_max_delta_uv1976": 0.001442420310146765,
+    "gray_20_to_100_mean_abs_relative_Y_error": 0.001665829683272865,
+    "sRGB_1931_relative_to_adapted_D65_delta_e00_mean": 0.4491577428289265,
+    "sRGB_1931_relative_to_adapted_D65_delta_e00_max": 1.1233234250791995,
+    "CCT_K_CIE1931": 6775.7,
+    "Duv_1960_CIE1931": 0.00217
+  },
+  "scope": "Natural mode, SDR, 40% raw 102/255, X-Rite i1Display3 with Panasonic PFS CCSS; absolute spectrum and HDR were not measured.",
+  "observer": "CIE 2015 2 degree",
+  "correction": "Panasonic VVX17P051J00.ccss",
+  "white_repeat_mean_xy": [
+    0.3134534532099105,
+    0.33071744927442204
+  ]
+}

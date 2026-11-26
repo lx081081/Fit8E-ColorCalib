@@ -41,3 +41,11 @@ The Windows package includes Google's ADB executable and its two DLLs. Their not
 ## Windows executable
 
 The Windows package includes the CPython runtime, Tcl/Tk, and the PyInstaller bootloader. The accompanying `licenses/` directory contains Python.txt, Tcl.txt, Tk.txt and PyInstaller.txt, including the bootloader exception.
+
+## CIE colorimetry data
+
+The daylight projection in `src/color_engine.py` is derived from the following International Commission on Illumination (CIE) datasets. It linearly interpolates S0, S1 and S2 to 1 nm and sums each against the CIE 2015 2° matching functions. The D65 coordinates use the tabulated illuminant. The derived numerical data is provided under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+
+- CIE 2018, [Components of the relative spectral distribution of daylight](https://doi.org/10.25039/CIE.DS.w7zunnny).
+- CIE 2015, [Cone-fundamental-based spectral tristimulus values for 2° field size](https://doi.org/10.25039/CIE.DS.548rw69q).
+- CIE 2019, [CIE standard illuminant D65](https://doi.org/10.25039/CIE.DS.hjfjmt59).

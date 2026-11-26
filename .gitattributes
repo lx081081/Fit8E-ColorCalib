@@ -1,5 +1,6 @@
 scripts/fit8e_calib_shizuku.sh text eol=lf
 
 # Preserve the exact bytes of the bundled profile and the archived measurements.
-assets/qdcm_calib_data_ar14_1080p_144hz_video_mode_dsi_panel.json -text
+assets/qdcm_calib_data_ar14_1080p_144hz_video_mode_dsi_panel.json -text whitespace=cr-at-eol
+assets/measurements/*.ti3 -text -diff
 reference/** -text

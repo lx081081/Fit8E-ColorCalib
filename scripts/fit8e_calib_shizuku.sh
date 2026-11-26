@@ -15,9 +15,10 @@ digest() {
     line=$(sha256sum "$1") || return 1
     printf '%s\n' "${line%% *}"
 }
-legacy_builtin() {
-    # v1.1.0 was distributed with both Windows and Unix line endings.
+bundled_profile() {
+    # Current measured D65, plus both byte-exact variants of the legacy project profile.
     case "$1" in
+        afb9547872edc21799b17d6e90f5df704cf4c3be069c1c893354210e4c28e8b6) return 0 ;;
         3eb02edeb1dfb62032a1f13843ce94547fcc636391967735e6d3c40fe90aa219|13baac65dce0dfc1de09fc29fd6d6d5e478943aa6e0f231f519772f3d5475e63) return 0 ;;
         *) return 1 ;;
     esac
@@ -27,32 +28,26 @@ validate_profile() {
 # AOSP ships awk. Read JSON structurally, including the byte-swapped QDCM tables.
 function fail(msg) { gsub(SUBSEP,"/",msg); print "Invalid QDCM: " msg > "/dev/stderr"; exit 1 }
 function space() { while (substr(doc,pos,1) ~ /^[ \t\r\n]$/) pos++ }
-function string_value(    start,n,part,c,e,h,i,code) {
-    start=++pos
-    n=index(substr(doc,start),"\"")
-    if (!n) fail("unterminated string")
-    part=substr(doc,start,n-1)
-    if (part !~ /[\\[:cntrl:]]/) { pos+=n; return part }
-    part=""
-    while (pos<=length(doc)) {
-        c=substr(doc,pos++,1)
-        if (c=="\"") return part
-        if (c ~ /[[:cntrl:]]/) fail("control character in string")
-        if (c=="\\") {
-            e=substr(doc,pos++,1)
-            if (e=="u") {
-                h=toupper(substr(doc,pos,4))
-                if (length(h)!=4 || h ~ /[^0-9A-F]/) fail("invalid Unicode escape")
-                pos+=4
-                code=0
-                for (i=1;i<=4;i++) code=code*16+index("0123456789ABCDEF",substr(h,i,1))-1
-                c=(code<128 ? sprintf("%c",code) : "\\u" h)
-            } else {
-                if (!(e in escapes)) fail("invalid escape")
-                c=escapes[e]
-            }
+function string_value(    rest,out,n,c,e,h,i,code) {
+    rest=substr(doc,++pos); out=""
+    while (match(rest,/["\\[:cntrl:]]/)) {
+        n=RSTART; c=substr(rest,n,1)
+        out=out substr(rest,1,n-1); pos+=n
+        if (c=="\"") return out
+        if (c!="\\") fail("control character in string")
+        e=substr(rest,++n,1); pos++
+        if (e=="u") {
+            h=toupper(substr(rest,n+1,4))
+            if (length(h)!=4 || h ~ /[^0-9A-F]/) fail("invalid Unicode escape")
+            code=0
+            for (i=1;i<=4;i++) code=code*16+index("0123456789ABCDEF",substr(h,i,1))-1
+            out=out (code<128 ? sprintf("%c",code) : "\\u" h)
+            n+=4; pos+=4
+        } else {
+            if (!(e in escapes)) fail("invalid escape")
+            out=out escapes[e]
         }
-        part=part c
+        rest=substr(rest,n+1)
     }
     fail("unterminated string")
 }
@@ -90,12 +85,18 @@ function field(path,type) {
     if (kind[path]!=type) fail("missing or mistyped " path)
     return val[path]
 }
-function decode(path,prefix,    h,out,i,n) {
+function decode(path,prefix,    h,out,i,n,block,decoded,j,blocklen) {
     h=toupper(field(path,"string")); n=length(h)
     if (!n || n%2 || h ~ /[^0-9A-F]/) fail("invalid encoded table")
     out=""; i=1
     if (n%4) { out=octet[substr(h,1,2)]; i=3 }
-    for (;i<=n;i+=4) out=out octet[substr(h,i+2,2)] octet[substr(h,i,2)]
+    # Android awk rescans strings for substr(). Work on short blocks of whole words.
+    for (;i<=n;i+=512) {
+        block=substr(h,i,512); blocklen=length(block); decoded=""
+        for (j=1;j<=blocklen;j+=4)
+            decoded=decoded octet[substr(block,j+2,2)] octet[substr(block,j,2)]
+        out=out decoded
+    }
     parse(out,prefix)
 }
 function table(path,count,limit,    csv,a,i,n) {
@@ -235,12 +236,23 @@ require_target() {
         *) die 2 "Unexpected primary panel: $panel" ;;
     esac
 }
+boot_id() {
+    cat /proc/sys/kernel/random/boot_id 2>/dev/null
+}
+profile_activation() {
+    [ -r "$state_dir/activation" ] || return
+    IFS=' ' read -r marked_hash marked_boot < "$state_dir/activation" || return
+    boot=$(boot_id) && [ -n "$boot" ] && [ -n "$marked_boot" ] || return
+    actual=$(digest "$target" 2>/dev/null) && [ "$actual" = "$marked_hash" ] || return
+    if [ "$marked_boot" = "$boot" ]; then printf pending; else printf rebooted; fi
+}
 probe() {
     identify
     printf 'MODEL=%s\nDEVICE=%s\nPRODUCT=%s\nSOC=%s\nBOARD=%s\nBUILD=%s\n' \
         "$(getprop ro.product.model)" "$dev" "$product" "$soc" "$(getprop ro.board.platform)" "$(getprop ro.build.display.id)"
     printf 'PANEL=%s\nPANEL_SOURCE=%s\nPANEL_TIMING=%s\nPANEL_STATE=%s\n' "$panel" "$panel_source" "$panel_timing" "$panel_state"
     printf 'MODEL_OK=%s\nHARDWARE_OK=%s\nSYSMODE=%s\n' "$model_ok" "$hardware_ok" "$(settings get system display_color_mode)"
+    printf 'ACTIVATION=%s\n' "$(profile_activation)"
     sum=$(md5sum "$target" 2>/dev/null) || sum=''
     root_tool=none
     if command -v xsu >/dev/null 2>&1; then root_tool=xsu
@@ -307,7 +319,7 @@ install_profile() {
     new_stage
     cp "$src" "$stage" || die 73 "Cannot copy staged profile"
     want=$(digest "$stage") && [ "$want" = "$before" ] || die 3 "Staged profile checksum mismatch"
-    legacy_builtin "$want" || validate_profile "$stage" || die 3 "Staged profile failed V3 validation"
+    bundled_profile "$want" || validate_profile "$stage" || die 3 "Staged profile failed V3 validation"
     chmod 0644 "$stage" || die 73 "Cannot set profile permissions"
     if [ "$(id -u)" = 0 ]; then
         chown system:graphics "$stage" && chcon u:object_r:vendor_display_vendor_data_file:s0 "$stage" ||
@@ -318,12 +330,17 @@ install_profile() {
     else
         base_mode=$(setting) || die 3 "Cannot capture original display mode"
         base=$current
+        # Earlier standalone installers placed their project profile over an empty data override.
+        if bundled_profile "$base"; then base='-'; fi
         if [ "$base" != '-' ]; then
             copy_original "$target" "$state_dir/original.next"
             mv -f "$state_dir/original.next" "$original" || die 73 "Cannot save original backup"
         fi
     fi
     save_record "$current" "$want"
+    boot=$(boot_id) || boot=''
+    printf '%s %s\n' "$want" "$boot" > "$state_dir/activation.next" &&
+        mv -f "$state_dir/activation.next" "$state_dir/activation" || die 73 "Cannot record the installation boot"
     mv -f "$stage" "$target" || die 73 "Could not activate staged profile"
     stage=''
     save_record "$want" "$want"
@@ -337,13 +354,15 @@ uninstall_profile() {
         printf '%s\n' 'UNCHANGED: no installed profile.'
         return
     else
-        if ! legacy_builtin "$current"; then
+        if ! bundled_profile "$current"; then
             [ -n "$proof" ] && [ -f "$proof" ] || die 3 "Untracked profile preserved. Supply its exact legacy JSON to remove it."
             known=$(digest "$proof") && [ "$known" = "$current" ] && validate_profile "$proof" ||
                 die 3 "Legacy JSON does not establish ownership; current profile preserved"
         fi
         base='-'; base_mode=0
     fi
+    # Migrate v0.1.0 records only after read_record has verified the saved original.
+    if bundled_profile "$base"; then base='-'; fi
     if [ "$base" != '-' ] && [ "$current" != "$base" ]; then
         new_stage
         copy_original "$original" "$stage"
@@ -356,6 +375,7 @@ uninstall_profile() {
         stage=''
     fi
     set_checked "$base_mode" || die 4 "File restored, but previous display mode could not be verified. Retry uninstall."
+    rm -f "$state_dir/activation" "$state_dir/activation.next" || die 73 "Could not clear installation boot record"
     rm -f "$record" || die 73 "Settings restored, but could not clear the installation record"
     rm -f "$original" || die 73 "Settings restored, but could not clear the saved backup"
     rmdir "$state_dir" 2>/dev/null || :  # Only remove an empty state directory.
@@ -372,11 +392,13 @@ case "$op" in
         printf '%s\n' "$details" | awk '
             /^MODEL=/{m=substr($0,7)} /^DEVICE=/{d=substr($0,8)} /^SOC=/{s=substr($0,5)}
             /^PANEL=/{p=substr($0,7)} /^DATA_MD5=/{h=substr($0,10)} /^SYSMODE=/{v=substr($0,9)}
+            /^ACTIVATION=/{activation=substr($0,12)}
             /^PANEL_STATE=/{ps=substr($0,13)} /^PANEL_SOURCE=/{src=substr($0,14)} /^PANEL_TIMING=/{t=substr($0,14)}
             /^HARDWARE_OK=/{hw=substr($0,13)}
             /^---SF---$/{printf "Device: %s (%s, SoC=%s)\nPanel: %s (%s)\nPanel source: %s %s\nTarget match: %s\nJSON: %s\nSysMode: %s\n",
                 m,d,s,(p?p:"unknown"),ps,(src?src:"unknown"),t,(hw==1 && ps=="match"?"yes":"no"),(h?"INSTALLED (" h ")":"NOT INSTALLED"),v; next}
-            /DisplayColorSetting:|Current color mode:|ColorMode::/{print}'
+            /DisplayColorSetting:|Current color mode:|ColorMode::/{print}
+            END{if(h) printf "Activation: %s\n",(activation?activation:"unconfirmed")}'
         exit $? ;;
     install) src="/sdcard/Download/$panel_file"; if [ "$#" -gt 0 ] && [ "$1" != --force ]; then src=$1; shift; fi ;;
     uninstall) if [ "$#" -gt 0 ] && [ "$1" != --force ]; then proof=$1; shift; fi ;;
@@ -394,7 +416,18 @@ require_target
 [ -r "$display_dir" ] && [ -x "$display_dir" ] || die 73 "Display directory is inaccessible"
 # Lock the stable directory inode; there is no lock file to unlink or abandon.
 (
-    flock -nx 9 || die 5 "Calibration is busy or its lock is unavailable"
+    command -v flock >/dev/null 2>&1 || die 6 "File locking (flock) is unavailable on this device"
+    attempts=0
+    while ! lock_error=$(LC_ALL=C flock -nx 9 2>&1); do
+        case "$lock_error" in
+            *"Permission denied"*|*"Operation not permitted"*) die 73 "Cannot access the calibration lock: $lock_error" ;;
+            ''|*"temporarily unavailable"*|*"would block"*) ;;
+            *) die 6 "Cannot acquire the calibration lock: $lock_error" ;;
+        esac
+        [ "$attempts" -lt 2 ] || die 5 "Another calibration operation is still running. Wait, then refresh."
+        attempts=$((attempts + 1))
+        sleep 1
+    done
     stage=''
     new_state=0
     cleanup() {

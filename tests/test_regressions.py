@@ -4,6 +4,7 @@ from dataclasses import replace
 import hashlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 import shlex
@@ -36,6 +37,59 @@ class ProfileTests(unittest.TestCase):
             if (cct, tint) == (6500, 0):
                 self.assertEqual(raw, ASSET.read_bytes())
 
+
+    def test_cie2015_daylight_against_spectral_integration(self):
+        # Independent 1 nm integrations of the CIE daylight basis spectra with
+        # CIE 170-2 Table 10.7a. The tabulated-D65 anchor moves xy by < 3e-7.
+        reference = {
+            5500: (.334442810, .349582251), 6000: (.322946301, .339580073),
+            6500: (.313452449, .330801828), 6800: (.308523039, .326065786),
+            7000: (.305527369, .323122512), 7100: (.304090675, .321696657),
+            7500: (.298837184, .316394367),
+        }
+        for cct, expected in reference.items():
+            xyz, actual = color_engine.target_whitepoint_xyz(cct)
+            self.assertEqual(xyz[1], 100)
+            self.assertLess(max(abs(x-y) for x,y in zip(expected, actual)), 3e-7)
+            center = color_engine._xy_to_uv60(*actual)
+            for tint in (-10, 1, 10):
+                _, colored = color_engine.target_whitepoint_xyz(cct, tint)
+                u, v = color_engine._xy_to_uv60(*colored)
+                self.assertAlmostEqual(math.hypot(u-center[0], v-center[1]), abs(tint)*.0005)
+                self.assertGreater(tint*(v-center[1]), 0)
+
+    def test_measured_d65_matches_dynamic_model_and_modes(self):
+        measured = ASSET.read_bytes()
+        self.assertEqual(hashlib.sha256(measured).hexdigest(), color_engine.D65_PROFILE_SHA256)
+        self.assertEqual(color_engine.synthesize_qdcm_bytes(ASSET, 6500, 0)[0], measured)
+        doc = json.loads(measured)
+        tables = color_engine._dec_raw(doc["Common"]["PostBlendGamut"])["Custom"]
+        white = color_engine.D65_XYZ
+        equivalent = color_engine._equivalent_1931(white)
+        rgb = color_engine._mat_vec(color_engine.M_PANEL_INV, white)
+        native = [[v/max(rgb) if i==j else 0. for j in range(3)] for i,v in enumerate(rgb)]
+        mappings = [native, color_engine._content_map(compiler.M_P3, equivalent)[0],
+                    color_engine._content_map(compiler.M_SRGB, equivalent)[0]]
+        for slot, mapping in enumerate(mappings):
+            self.assertEqual(color_engine._build_gamut_csv(mapping), tables[str(slot)])
+        for cct, tint in ((6499,0),(6500,1),(6000,0),(6800,0),(7100,0),(7500,-10)):
+            raw, preview = color_engine.synthesize_qdcm_bytes(ASSET,cct,tint)
+            self.assertNotEqual(raw, measured)
+            color_engine.validate_qdcm(raw)
+            panel = json.loads(raw)[color_engine.PANEL_KEY]
+            self.assertEqual(panel["HDR"]["PostBlendGamut"], panel["P3"]["PostBlendGamut"])
+            self.assertEqual(preview, color_engine.estimate_whitepoint_preview(cct,tint))
+            self.assertEqual(preview["xy"], color_engine.target_whitepoint_xyz(cct,tint)[1])
+
+    def test_old_external_default_cannot_shadow_measured_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old = Path(tmp) / app.PANEL_FILENAME
+            shutil.copyfile(ROOT / "reference" / app.PANEL_FILENAME, old)
+            with patch.object(app, "get_resource_roots", return_value=[Path(tmp),ROOT]):
+                self.assertEqual(app.find_default_json(), ASSET)
+            with patch.object(app, "get_resource_roots", return_value=[Path(tmp)]):
+                self.assertIsNone(app.find_default_json())
+
     def test_application_version_and_builder_must_agree(self):
         output = io.StringIO()
         with self.assertRaises(SystemExit) as done, contextlib.redirect_stdout(output):
@@ -49,6 +103,20 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(wrong.returncode, 2)
         self.assertIn(app.APP_VERSION.encode(), wrong.stderr)
 
+    def test_profile_timeout_reports_pending_work_without_retrying(self):
+        client = app.AdbClient(language="zh")
+        st = app.DeviceStatus(serial="TEST", has_root_tool="su")
+        with patch.object(client, "run", return_value=(124, "", "timeout")) as run:
+            ok, detail = client._apply(st, ["install", "profile.json"], False, reboot=True)
+            self.assertFalse(ok)
+            self.assertIn("掌机可能仍在处理", detail)
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_args.args[1], 120)
+            client.language = "en"
+            self.assertIn("before retrying", client._helper("TEST", ["uninstall"])[2])
+            self.assertEqual(client._helper("TEST", ["probe"]), (124, "", "timeout"))
+            self.assertEqual(run.call_args.args[1], 40)
+
     def test_invalid_cli_arguments_do_not_produce_a_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "out.json"
@@ -58,6 +126,33 @@ class ProfileTests(unittest.TestCase):
                     app.run_cli(args)
                 self.assertEqual(caught.exception.code, 2)
             self.assertFalse(out.exists())
+
+    def test_export_preserves_default_and_existing_destination_on_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp) / "default.json"
+            base.write_bytes(ASSET.read_bytes())
+            with self.assertRaisesRegex(ValueError, "built-in"):
+                app.export_profile(base, base, 7100, 0)
+            destination = Path(temp) / "saved.json"
+            destination.write_bytes(b"earlier export")
+            with patch.object(Path, "replace", side_effect=PermissionError("locked")):
+                with self.assertRaises(PermissionError):
+                    app.export_profile(base, destination, 6000, 1)
+            self.assertEqual(destination.read_bytes(), b"earlier export")
+            self.assertEqual(base.read_bytes(), ASSET.read_bytes())
+            self.assertEqual(set(Path(temp).iterdir()), {base, destination})
+
+    def test_invalid_measurement_inputs_leave_existing_output(self):
+        with self.assertRaisesRegex(ValueError, "invertible"):
+            compiler.mat_inv([[1,1,1]] * 3)
+        with self.assertRaisesRegex(ValueError, "gains"):
+            compiler.characterize_panel([], (float("nan"), 1, 1))
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "saved.json"
+            out.write_bytes(b"old profile")
+            with self.assertRaisesRegex(ValueError, "black < knee < peak"):
+                compiler.generate_qdcm_v3(NATIVE, ASSET, out, hdr_knee=448, hdr_peak=447)
+            self.assertEqual(out.read_bytes(), b"old profile")
 
     def test_ti3_names_extra_table_and_missing_verification(self):
         lines = NATIVE.read_text().splitlines()
@@ -130,6 +225,7 @@ class DeviceTests(unittest.TestCase):
         self.script = HELPER.read_bytes().replace(b"\r\n", b"\n")
         self.isolated = self.script.replace(b"display_dir=/data/vendor/display", b'display_dir="$FIT_TEST_DIR/display"')
         self.isolated = self.isolated.replace(b"/sys/class/", b'"$FIT_TEST_DIR/sys"/class/')
+        self.isolated = self.isolated.replace(b"/proc/sys/kernel/random/boot_id", b'"$FIT_TEST_DIR/boot-id"')
         self.assertNotIn(b"display_dir=/data/", self.isolated)
         self.stub("getprop", '''case "$1" in
 ro.product.device|ro.product.name) echo "$TEST_DEVICE";;
@@ -397,6 +493,19 @@ esac''')
             self.assertNotEqual(self.device("validate",self.custom.as_posix()).returncode,0)
         self.assertFalse(self.target.exists())
 
+    def test_device_validator_decodes_chunk_boundaries_and_escaped_keys(self):
+        doc = json.loads(self.adjusted)
+        hdr = doc[color_engine.PANEL_KEY]["HDR"]
+        for count in (511, 512):
+            # Consecutive lengths exercise both possible byte orders for the first word.
+            hdr["PostBlendHdrBlob"] = color_engine._enc_obj({"blob": "x" * count + '"\\'})
+            data = json.dumps(doc).encode().replace(b'"Version"', br'"\u0056ersion"', 1)
+            self.custom.write_bytes(data)
+            color_engine.validate_qdcm(data)
+            self.assertEqual(self.device("validate", self.custom.as_posix()).returncode, 0)
+        self.custom.write_bytes(data.replace(br'"\u0056ersion"', br'"\u00ZZersion"'))
+        self.assertNotEqual(self.device("validate", self.custom.as_posix()).returncode, 0)
+
     def test_mode_and_reboot_failure_and_uninstall_retry(self):
         self.env["FAIL_SETTING"]="1"
         ok,detail=self.client.install(ASSET)
@@ -469,6 +578,37 @@ exec /usr/bin/mv "$@"''')
         self.assertEqual(self.target.read_bytes(), ASSET.read_bytes())
         self.assertFalse(self.reboots)
 
+
+    def test_one_uninstall_restores_factory_across_legacy_upgrade(self):
+        legacy = (ROOT / "reference" / app.PANEL_FILENAME).read_bytes()
+        self.target.write_bytes(legacy)
+        self.assertTrue(self.client.install(ASSET, reboot=False)[0])
+        self.assertTrue(self.client.uninstall(reboot=False)[0])
+        self.assertFalse(self.target.exists())
+        self.assertEqual(self.mode.read_text().strip(), "2")
+
+        # A 0.1.0 journal may already have archived the old built-in as its base.
+        state = self.display / ".fit8e-colorcalib"
+        state.mkdir()
+        (state / "original").write_bytes(legacy)
+        self.target.write_bytes(ASSET.read_bytes())
+        current = hashlib.sha256(self.target.read_bytes()).hexdigest()
+        (state / "record").write_text(f"{hashlib.sha256(legacy).hexdigest()} 0 {current} {current}\n")
+        self.assertTrue(self.client.uninstall(reboot=False)[0])
+        self.assertFalse(self.target.exists())
+        self.assertFalse(state.exists())
+        self.assertEqual(self.mode.read_text().strip(), "0")
+
+    def test_activation_requires_matching_profile_and_new_boot(self):
+        boot = self.tmp / "boot-id"
+        boot.write_text("boot-one")
+        self.assertTrue(self.client.install(ASSET, reboot=False)[0])
+        self.assertEqual(self.client.probe().activation, "pending")
+        boot.write_text("boot-two")
+        self.assertEqual(self.client.probe().activation, "rebooted")
+        self.target.write_bytes(self.adjusted)
+        self.assertEqual(self.client.probe().activation, "")
+
     def test_busy_lock_prevents_writes(self):
         script=self.tmp/"helper.sh"
         script.write_bytes(self.isolated)
@@ -522,6 +662,11 @@ class GuiTests(unittest.TestCase):
                     self.assertEqual(error.call_count, 2)
                     info.assert_not_called()
                 window._toggle_lang()
+                window.tint_var.set(6)
+                window._select_preset(6500)
+                self.assertEqual(window.tint_var.get(), 0)
+                self.assertEqual(window.cct_var.get(), 6500)
+                self.assertIn("2015", window._current_profile_desc())
                 window._select_preset(6800)
                 self.assertEqual(window.cct_var.get(), 6800)
             finally:

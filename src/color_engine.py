@@ -2,9 +2,9 @@
 """
 KONKR Pocket FIT Elite (SM8750P) Hardware Whitepoint & Color-Temperature Engine.
 
-Uses CIE Daylight illuminant locus + CIE 1960 UCS perpendicular Duv tint +
-Bradford Chromatic Adaptation to synthesize SM8750P Version 3 HPM 17^3 3D LUTs
-and synchronized HDR10 PQ tone-mapping in <0.15s using pure Python stdlib.
+Integrates CIE D-series daylight against the CIE 2015 2-degree observer.
+Fits the panel in measured XYZ and adapts the sRGB/P3 content spaces in their
+original 1931 coordinates before compiling the Qualcomm 17-cubed gamut LUTs.
 
 SPDX-License-Identifier: GPL-3.0-only
 """
@@ -13,23 +13,16 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from pathlib import Path
 
+from build_qdcm_v3 import M_P3, M_SRGB, characterize_panel, load_ti3
+
 PANEL_KEY = "ar14_1080p_144hz_video_mode_dsi_panel"
+D65_XY = (0.3134524493261819, 0.33080182802444436)
+D65_XYZ = [100 * D65_XY[0] / D65_XY[1], 100.0, 100 * (1 - sum(D65_XY)) / D65_XY[1]]
+D65_PROFILE_SHA256 = "afb9547872edc21799b17d6e90f5df704cf4c3be069c1c893354210e4c28e8b6"
 
-D65_XYZ = [95.045471, 100.0, 108.905029]
-D65_XY = (0.312713, 0.329016)
-
-M_SRGB = [
-    [41.24564, 35.75761, 18.04375],
-    [21.26729, 71.51522,  7.21750],
-    [ 1.93339, 11.91920, 95.03041],
-]
-M_P3 = [
-    [48.6570949, 26.5667693, 19.8217285],
-    [22.8974564, 69.1738522,  7.9286914],
-    [ 0.0000000,  4.5113382, 104.3944369],
-]
 M_XYZ_TO_SRGB = [
     [ 3.2404542, -1.5371385, -0.4985314],
     [-0.9692660,  1.8760108,  0.0415560],
@@ -41,40 +34,15 @@ M_BRADFORD = [
     [ 0.0389000, -0.0685000,  1.0296000],
 ]
 
-# Empirically characterized KONKR Pocket FIT Elite (ar14 1080p 144Hz IPS) panel model
-# Extracted from 105-patch X-Rite i1Display Plus PFS characterization + closed-loop D65 trim
-M_PANEL_INV = [
-    [0.02630415600317594, -0.009617400949099386, -0.004258011194125098],
-    [-0.0074216583538796585, 0.016191918186994288, 0.0002399576694524367],
-    [0.000335147614191569, -0.0009162843164140454, 0.010104804747280337],
-]
-TRC_X = [
-    0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45,
-    0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0,
-]
-TRC_Y = [
-    [0.0, 0.001572572612152006, 0.006944686165298147, 0.01656321427655425, 0.03185432567523121,
-     0.05263885012957988, 0.07950876133549169, 0.10992455813726922, 0.1462664069198803, 0.19115716320186404,
-     0.24198316424096256, 0.29044675296947836, 0.34945773894065596, 0.4163062085832794, 0.48573598365839443,
-     0.5546427199736832, 0.6354188760629809, 0.7207428319220246, 0.8120776677943148, 0.8988115191299344, 1.0],
-    [0.0, 0.0014816142618654141, 0.006464337472784491, 0.015355609196507358, 0.02936445395261882,
-     0.04825284269850711, 0.0738534644686736, 0.10142579258109391, 0.13699032164752933, 0.17816507556290276,
-     0.22762638968372215, 0.27301619261782656, 0.3309073594218674, 0.39598843132978234, 0.46651219893121687,
-     0.5346992983050465, 0.6166933138968583, 0.7029678351234296, 0.7963873182229085, 0.8845158462959332, 1.0],
-    [0.0, 0.0013863468678655597, 0.006423305166584415, 0.01559285646161247, 0.03022371877713605,
-     0.05014589992734952, 0.07680292810710065, 0.10582681168986202, 0.14278687007245067, 0.1861703887464145,
-     0.23792992153325354, 0.2857541087662751, 0.34587427240221086, 0.4133805789851254, 0.4847574515973375,
-     0.5552117092038305, 0.6378958777525486, 0.7239803702965653, 0.8164266841041884, 0.9024193205000212, 1.0],
-]
-TRC_Y_LUM = [
-    0.0, 0.0014937201332274228, 0.006560857255371403, 0.015622269553086026, 0.029940363776852864,
-    0.0492940908904952, 0.0752319128771213, 0.10349510479917325, 0.13931893289659555, 0.1814185359122043,
-    0.2313243762645712, 0.27752202663997283, 0.33580215939856783, 0.4014200613603157, 0.4717775822857259,
-    0.5402735167279797, 0.6220641572782531, 0.7081285457100704, 0.8010479514282571, 0.8887371951115369, 1.0,
-]
+# Sums of x-bar, y-bar and z-bar (rows) times daylight S0, S1 and S2 (columns).
+# CIE 015:2018 daylight bases (5 nm, linearly interpolated to 1 nm) and
+# CIE 170-2:2015 Table 10.7a (390–830 nm). See THIRD_PARTY_NOTICES.md.
+DAYLIGHT_XYZ_2015 = (
+    (10799.173028368126, 184.73368922490093, 231.90307689555266),
+    (11302.081335296729, 251.19841679628666, 83.03111230838807),
+    (12975.9040413579, 3822.712163524851, -239.2938400491935),
+)
 
-# Reference calibrated D65 P3 headroom scale & HDR10 baseline (aging-compensated)
-REF_P3_SCALE_D65 = 0.9306071196
 REF_HDR_PEAK = 447.0
 REF_HDR_KNEE = 280.0
 REF_HDR_MIN = 0.37
@@ -162,20 +130,38 @@ class _PchipCurve:
         )
 
 
-_INV_TRC = [_PchipCurve(TRC_Y[c], TRC_X) for c in range(3)]
-_FWD_LUM = _PchipCurve(TRC_X, TRC_Y_LUM)
+# Frozen executables carry the same two factory captures as the source checkout.
+_DATA_ROOT = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
+_MEASUREMENTS = _DATA_ROOT / "assets" / "measurements"
+_PANEL = characterize_panel(load_ti3(_MEASUREMENTS / "factory2015-normalized.ti3"))
+_PANEL_1931 = characterize_panel(load_ti3(_MEASUREMENTS / "factory1931.ti3"))
 
 
-# ---------- CIE Daylight + Tint + Bradford Chromatic Adaptation ----------
+def _relative_matrix(response):
+    return [[value * 100 / response.white[1] for value in row] for row in response.matrix]
+
+
+M_PANEL_INV = _mat_inv(_relative_matrix(_PANEL))
+M_1931_TO_2015 = _mat_mul(_relative_matrix(_PANEL), _mat_inv(_relative_matrix(_PANEL_1931)))
+M_2015_TO_1931 = _mat_inv(M_1931_TO_2015)
+_INV_TRC = [_PchipCurve(curve, _PANEL.levels) for curve in _PANEL.channel_curves]
+_FWD_LUM = _PchipCurve(_PANEL.levels, _PANEL.luminance_curve)
+
+
 def _daylight_xy(cct: float) -> tuple[float, float]:
-    """CIE D-series daylight chromaticity (anchored so cct=6500 hits exact D65)."""
-    T = max(4000.0, min(25000.0, float(cct))) * (6504.0 / 6500.0)
-    if T <= 7000.0:
-        x = -4.6070e9 / (T**3) + 2.9678e6 / (T**2) + 0.09911e3 / T + 0.244063
+    """Nominal D-series illuminant, integrated in the CIE 2015 2° observer."""
+    temperature = float(cct) * (1.4388 / 1.4380)
+    if temperature <= 7000.0:
+        x = -4.6070e9 / temperature**3 + 2.9678e6 / temperature**2 + 99.11 / temperature + 0.244063
     else:
-        x = -2.0064e9 / (T**3) + 1.9018e6 / (T**2) + 0.24748e3 / T + 0.237040
-    y = -3.000 * x * x + 2.870 * x - 0.275
-    return x, y
+        x = -2.0064e9 / temperature**3 + 1.9018e6 / temperature**2 + 247.48 / temperature + 0.237040
+    y = -3.0*x*x + 2.870*x - 0.275
+    denominator = 0.0241 + 0.2562*x - 0.7341*y
+    m1 = round((-1.3515 - 1.7703*x + 5.9114*y) / denominator, 3)
+    m2 = round((0.0300 - 31.4424*x + 30.0717*y) / denominator, 3)
+    xyz = _mat_vec(DAYLIGHT_XYZ_2015, (1.0, m1, m2))
+    total = sum(xyz)
+    return xyz[0] / total, xyz[1] / total
 
 
 def _xy_to_uv60(x: float, y: float) -> tuple[float, float]:
@@ -188,7 +174,7 @@ def _uv60_to_xy(u: float, v: float) -> tuple[float, float]:
     return (3.0 * u / d, 2.0 * v / d)
 
 
-# Exact tiny offset in CIE 1960 UCS so (6500K, tint=0) lands strictly on CIE D65 (0.312713, 0.329016)
+# Anchor the rounded D-series coefficients to the tabulated D65 spectrum at 6500 K.
 _U65_RAW, _V65_RAW = _xy_to_uv60(*_daylight_xy(6500.0))
 _U65_EXACT, _V65_EXACT = _xy_to_uv60(*D65_XY)
 _DU_ANCHOR = _U65_EXACT - _U65_RAW
@@ -196,7 +182,7 @@ _DV_ANCHOR = _V65_EXACT - _V65_RAW
 
 
 def target_whitepoint_xyz(cct: int, tint: int = 0) -> tuple[list[float], tuple[float, float]]:
-    """Return (XYZ [Y=100], (x, y)) for given CCT (5500..7500K) and Tint (-10..+10; +green, -magenta)."""
+    """Return CIE 2015 2° XYZ (Y=100) and xy for nominal daylight temperature and UCS tint."""
     if cct == 6500 and tint == 0:
         return list(D65_XYZ), D65_XY
 
@@ -248,17 +234,32 @@ def _compute_scaled_map(M_target: list[list[float]]) -> tuple[list[list[float]],
     return [[M_raw[i][j] * scale for j in range(3)] for i in range(3)], scale
 
 
-def estimate_whitepoint_preview(cct: int, tint: int = 0) -> dict:
-    """Fast (<0.1ms) preview for live GUI slider updates: swatch hex, brightness retention, xy."""
-    w_xyz, xy = target_whitepoint_xyz(cct, tint)
-    M_adapt = bradford_adapt_matrix(D65_XYZ, w_xyz)
-    M_srgb_t = _mat_mul(M_adapt, M_SRGB)
-    _, scale_srgb = _compute_scaled_map(M_srgb_t)
-    M_p3_t = _mat_mul(M_adapt, M_P3)
-    _, scale_p3 = _compute_scaled_map(M_p3_t)
+def _content_map(content_matrix, white_1931):
+    # Bradford is defined for the original 1931 XYZ content space. Only then
+    # change observer using the measured response of this three-primary panel.
+    content_white = _mat_vec(content_matrix, (1.0, 1.0, 1.0))
+    adaptation = bradford_adapt_matrix(content_white, white_1931)
+    measured = _mat_mul(M_1931_TO_2015, _mat_mul(adaptation, content_matrix))
+    white_y = sum(measured[1])
+    return _compute_scaled_map([[v * 100 / white_y for v in row] for row in measured])
 
-    # Convert target whitepoint XYZ to visually accurate sRGB preview swatch (normalized to max=255)
-    lin_rgb = _mat_vec(M_XYZ_TO_SRGB, [v / 100.0 for v in w_xyz])
+
+def _equivalent_1931(white_2015):
+    xyz = _mat_vec(M_2015_TO_1931, white_2015)
+    return [v * 100 / xyz[1] for v in xyz]
+
+
+_, REF_P3_SCALE_D65 = _content_map(M_P3, _equivalent_1931(D65_XYZ))
+
+
+def estimate_whitepoint_preview(cct: int, tint: int = 0) -> dict:
+    """Approximate the panel white on an sRGB monitor and return its 2015 xy and headroom."""
+    w_xyz, xy = target_whitepoint_xyz(cct, tint)
+    white_1931 = _equivalent_1931(w_xyz)
+    _, scale_srgb = _content_map(M_SRGB, white_1931)
+    _, scale_p3 = _content_map(M_P3, white_1931)
+
+    lin_rgb = _mat_vec(M_XYZ_TO_SRGB, [v / 100.0 for v in white_1931])
     lin_rgb = [max(0.0, c) for c in lin_rgb]
     mx = max(lin_rgb) or 1.0
     lin_rgb = [c / mx for c in lin_rgb]
@@ -452,9 +453,9 @@ def synthesize_qdcm_bytes(base_json_path: Path, cct: int = 6500, tint: int = 0) 
         return base_json_path.read_bytes(), preview
 
     w_xyz, _ = target_whitepoint_xyz(cct, tint)
-    M_adapt = bradford_adapt_matrix(D65_XYZ, w_xyz)
-    M_srgb_map, _ = _compute_scaled_map(_mat_mul(M_adapt, M_SRGB))
-    M_p3_map, scale_p3 = _compute_scaled_map(_mat_mul(M_adapt, M_P3))
+    white_1931 = _equivalent_1931(w_xyz)
+    M_srgb_map, _ = _content_map(M_SRGB, white_1931)
+    M_p3_map, scale_p3 = _content_map(M_P3, white_1931)
 
     rgb_nat = _mat_vec(M_PANEL_INV, w_xyz)
     s_nat = 1.0 / max(rgb_nat)

@@ -16,6 +16,7 @@ import runpy
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -91,16 +92,36 @@ def main() -> int:
         print(f"ERROR: Missing calibration JSON: {json_src}", file=sys.stderr)
         return 1
 
-    work_build = REPO_ROOT / "build"
-    work_dist = REPO_ROOT / "dist"
     rel_root = REPO_ROOT / "release"
+    rel_root.mkdir(exist_ok=True)
     pkg_name = f"Fit8E-ColorCalib-v{args.version}-win64"
-    pkg_dir = rel_root / pkg_name
+    with tempfile.TemporaryDirectory(prefix=".win-build-", dir=rel_root) as directory:
+        stage = Path(directory)
+        build_package(args.python, pt_dir, json_src, pkg_name, stage)
+        final = rel_root / pkg_name
+        previous = stage / "previous-package"
+        if final.exists():
+            if final.is_symlink() or final.resolve().parent != rel_root.resolve():
+                raise ValueError(f"Unexpected package directory: {final}")
+            final.replace(previous)
+        try:
+            (stage / pkg_name).replace(final)
+            (stage / f"{pkg_name}.zip").replace(rel_root / f"{pkg_name}.zip")
+        except OSError:
+            if final.exists():
+                final.replace(stage / pkg_name)
+            if previous.exists():
+                previous.replace(final)
+            raise
+    print(f"Built portable package: {final}")
+    print(f"Built ZIP archive: {rel_root / (pkg_name + '.zip')}")
+    return 0
 
-    for d in (work_build, work_dist, pkg_dir):
-        if d.exists():
-            shutil.rmtree(d)
-    rel_root.mkdir(parents=True, exist_ok=True)
+
+def build_package(python: str, pt_dir: Path, json_src: Path, pkg_name: str, stage: Path) -> None:
+    work_build = stage / "build"
+    work_dist = stage / "dist"
+    pkg_dir = stage / pkg_name
 
     # Windows Explorer reads the PE version resource independently of the GUI title.
     work_build.mkdir(exist_ok=True)
@@ -123,7 +144,7 @@ def main() -> int:
     helper = REPO_ROOT / "scripts" / "fit8e_calib_shizuku.sh"
     ico_src = REPO_ROOT / "assets" / "app_icon.ico"
     cmd = [
-        args.python, "-m", "PyInstaller",
+        python, "-m", "PyInstaller",
         "--noconfirm",
         "--clean",
         "--onefile",
@@ -137,6 +158,9 @@ def main() -> int:
         "--workpath", str(work_build),
         "--specpath", str(work_build),
     ]
+    measurements = REPO_ROOT / "assets" / "measurements"
+    for name in ("factory2015-normalized.ti3", "factory1931.ti3"):
+        cmd += ["--add-data", f"{measurements / name};assets/measurements"]
     if ico_src.is_file():
         cmd += ["--icon", str(ico_src), "--add-data", f"{ico_src};assets"]
     png_src = REPO_ROOT / "assets" / "app_icon_48.png"
@@ -157,7 +181,7 @@ def main() -> int:
 
     (pkg_dir / "assets").mkdir(exist_ok=True)
     shutil.copy2(json_src, pkg_dir / "assets" / PANEL_JSON)
-    shutil.copy2(REPO_ROOT / "assets" / "Fit8E_Compare_Report.png", pkg_dir / "assets")
+    shutil.copytree(measurements, pkg_dir / "assets" / "measurements")
 
     (pkg_dir / "scripts").mkdir(exist_ok=True)
     shutil.copy2(helper, pkg_dir / "scripts")
@@ -166,25 +190,16 @@ def main() -> int:
     for fname in ADB_FILES:
         shutil.copy2(pt_dir / fname, pkg_dir / "platform-tools" / fname)
 
-    for doc in ("README.md", "README_EN.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
+    for doc in ("README.md", "README_EN.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
         shutil.copy2(REPO_ROOT / doc, pkg_dir / doc)
-    copy_runtime_licenses(args.python, pkg_dir / "licenses")
+    copy_runtime_licenses(python, pkg_dir / "licenses")
 
     # Create ZIP
-    zip_path = rel_root / f"{pkg_name}.zip"
-    if zip_path.exists():
-        zip_path.unlink()
+    zip_path = stage / f"{pkg_name}.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for p in sorted(pkg_dir.rglob("*")):
             if p.is_file():
-                zf.write(p, p.relative_to(rel_root))
-
-    print(f"\nBuilt portable package: {pkg_dir}")
-    print(f"Built ZIP archive:      {zip_path} ({zip_path.stat().st_size / 1024 / 1024:.2f} MB)")
-    for d in (work_build, work_dist):
-        if d.exists():
-            shutil.rmtree(d)
-    return 0
+                zf.write(p, p.relative_to(stage))
 
 
 if __name__ == "__main__":
