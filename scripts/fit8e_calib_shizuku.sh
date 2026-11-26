@@ -1,4 +1,5 @@
 #!/system/bin/sh
+# SPDX-License-Identifier: GPL-3.0-only
 # Run with Shizuku/ADB shell. The desktop client uses this same transaction.
 panel_key=ar14_1080p_144hz_video_mode_dsi_panel
 panel_file=qdcm_calib_data_ar14_1080p_144hz_video_mode_dsi_panel.json

@@ -2,7 +2,9 @@
 
 # Fit 8E 屏幕校色工具
 
-通过 USB 调试给 KONKR Pocket FIT Elite（Fit 8E）的内屏安装校色档，改善颜色过饱和和白点偏色。当前版本为 `0.1.0`。[English](README_EN.md) · [MIT 许可证](LICENSE)
+通过 USB 调试给 KONKR Pocket FIT Elite（Fit 8E）的内屏安装校色档，改善颜色过饱和和白点偏色。当前版本为 `0.1.0`。[English](README_EN.md) · [完整源码](https://github.com/lx081081/Fit8E-ColorCalib/archive/refs/tags/v0.1.0.zip)
+
+本项目的应用代码采用 GNU 通用公共许可证第 3 版（仅此版本，`GPL-3.0-only`）。[许可证全文](LICENSE) · [第三方声明](THIRD_PARTY_NOTICES.md)
 
 ## 使用前请注意
 
@@ -20,7 +22,7 @@
 
 ### Windows
 
-1. 在项目的 `release/` 目录找到 `Fit8E-ColorCalib-v0.1.0-win64.zip`，完整解压后双击 `Fit8E-ColorCalib.exe`。包内已包含 ADB 和默认校色档。
+1. [下载 Windows 64 位便携包](https://github.com/lx081081/Fit8E-ColorCalib/releases/download/v0.1.0/Fit8E-ColorCalib-v0.1.0-win64.zip)，完整解压后双击 `Fit8E-ColorCalib.exe`。包内已包含 ADB 和默认校色档。
 2. 在掌机的开发者选项中开启 **USB 调试**，用 USB 数据线连接电脑，在掌机上点「允许 USB 调试」。回到工具点「刷新」，确认显示 `Pocket FIT Elite`。
 3. 首次使用可保留默认 **6500 K、色调 0**，点「一键安装校色并重启」。想自己选择重启时间，可点「仅安装（稍后重启）」。
 4. 掌机重启后先解锁，再点「刷新」。看到 **「已安装并生效」** 即可切换显示模式。

@@ -5,7 +5,7 @@ Zero-Root / Zero-Unlock / Zero-Flash native Qualcomm QDCM V3 HPM installer,
 hardware color-temperature & tint compiler, and live mode switcher.
 
 Supports both a minimalist light-mode Tkinter GUI (default) and a full CLI.
-License: MIT
+SPDX-License-Identifier: GPL-3.0-only
 """
 
 from __future__ import annotations

@@ -2,7 +2,9 @@
 
 # Fit 8E Display Calibration
 
-Install a color profile for the KONKR Pocket FIT Elite (Fit 8E) to correct oversaturated colors and white-point tint on its built-in display. Current version `0.1.0`. [简体中文](README.md) · [MIT license](LICENSE)
+Install a color profile for the KONKR Pocket FIT Elite (Fit 8E) to correct oversaturated colors and white-point tint on its built-in display. Current version `0.1.0`. [简体中文](README.md) · [Complete source](https://github.com/lx081081/Fit8E-ColorCalib/archive/refs/tags/v0.1.0.zip)
+
+The application code is licensed under the GNU General Public License, version 3 only (`GPL-3.0-only`). [Full license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## Before you start
 
@@ -20,7 +22,7 @@ Install a color profile for the KONKR Pocket FIT Elite (Fit 8E) to correct overs
 
 ### Windows
 
-1. Find `Fit8E-ColorCalib-v0.1.0-win64.zip` in the project’s `release/` directory. Extract the entire archive, open `Fit8E-ColorCalib.exe`, and click **EN** for English. The package includes ADB and the default profile.
+1. [Download the Windows 64-bit portable package](https://github.com/lx081081/Fit8E-ColorCalib/releases/download/v0.1.0/Fit8E-ColorCalib-v0.1.0-win64.zip). Extract the entire archive, open `Fit8E-ColorCalib.exe`, and click **EN** for English. The package includes ADB and the default profile.
 2. Enable **USB debugging** in the handheld’s Developer options. Connect it to your PC with a USB data cable and tap **Allow USB debugging** on the handheld. Click **Refresh** in the app and check that it shows `Pocket FIT Elite`.
 3. For a first install, leave the defaults at **6500 K and tint 0**. Click **Install Calibration & Reboot**, or choose **Install Only** to reboot manually later.
 4. Unlock the handheld after reboot and click **Refresh**. Once the app shows **Installed & Active**, you can switch display modes.

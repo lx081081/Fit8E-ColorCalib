@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """
 Build a portable Windows release ZIP for Fit8E-ColorCalib:
   - Compiles src/fit8e_color_tool.py into a single windowed Fit8E-ColorCalib.exe via PyInstaller
   - Bundles minimal Google platform-tools (adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll, NOTICE.txt)
-  - Copies assets/qdcm_calib_data_ar14_1080p_144hz_video_mode_dsi_panel.json, README.md, LICENSE
+  - Includes the calibration profile, both READMEs, and project and runtime license notices
   - Packages everything cleanly into release/Fit8E-ColorCalib-v<ver>-win64.zip
 """
 
@@ -44,6 +45,31 @@ def locate_platform_tools(explicit: Path | None) -> Path | None:
         if c and (c / "adb.exe").is_file():
             return c
     return None
+
+
+def copy_runtime_licenses(python: str, destination: Path) -> None:
+    # The build interpreter can differ from the interpreter running this script.
+    roots = subprocess.check_output(
+        [python, "-c", "import sys; from importlib.metadata import distribution; "
+         "print(sys.base_prefix); print(distribution('pyinstaller').locate_file(''))"],
+        text=True,
+    ).splitlines()
+    base, packages = map(Path, roots)
+    notices = {
+        "Python.txt": base / "LICENSE.txt",
+        "Tcl.txt": REPO_ROOT / "LICENSES" / "Tcl.txt",
+    }
+    for name, parent, pattern in (
+        ("Tk.txt", base, "tcl/tk*/license.terms"),
+        ("PyInstaller.txt", packages, "pyinstaller-*.dist-info/**/COPYING.txt"),
+    ):
+        notice = next(parent.glob(pattern), None)
+        if notice is None:
+            raise FileNotFoundError(f"Missing {name} notice under {parent}")
+        notices[name] = notice
+    destination.mkdir()
+    for name, notice in notices.items():
+        shutil.copy2(notice, destination / name)
 
 
 def main() -> int:
@@ -138,14 +164,11 @@ def main() -> int:
 
     (pkg_dir / "platform-tools").mkdir(exist_ok=True)
     for fname in ADB_FILES:
-        src_f = pt_dir / fname
-        if src_f.is_file():
-            shutil.copy2(src_f, pkg_dir / "platform-tools" / fname)
+        shutil.copy2(pt_dir / fname, pkg_dir / "platform-tools" / fname)
 
-    for doc in ("README.md", "README_EN.md", "LICENSE"):
-        src_d = REPO_ROOT / doc
-        if src_d.is_file():
-            shutil.copy2(src_d, pkg_dir / doc)
+    for doc in ("README.md", "README_EN.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
+        shutil.copy2(REPO_ROOT / doc, pkg_dir / doc)
+    copy_runtime_licenses(args.python, pkg_dir / "licenses")
 
     # Create ZIP
     zip_path = rel_root / f"{pkg_name}.zip"

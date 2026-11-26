@@ -70,7 +70,7 @@ jobs:
         run: |
           PKG="Fit8E-ColorCalib-v${VER}-macos-linux-shizuku"
           mkdir -p "release/${PKG}"
-          cp -r src assets scripts README.md README_EN.md LICENSE "release/${PKG}/"
+          cp -r src assets scripts README.md README_EN.md LICENSE LICENSES THIRD_PARTY_NOTICES.md "release/${PKG}/"
           chmod +x "release/${PKG}/src/fit8e_color_tool.py" "release/${PKG}/src/build_qdcm_v3.py" "release/${PKG}/scripts/fit8e_calib_shizuku.sh"
           (cd release && zip -r "${PKG}.zip" "${PKG}")
 

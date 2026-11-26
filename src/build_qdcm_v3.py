@@ -13,7 +13,7 @@ Hardware pipeline targeted (DPU 12.x Version 3 HPM):
   3. PostBlendGC:    1280-entry 10-bit HPM LUT (1024 main + 256 64x-shadow entries)
   4. PostBlendHdrBlob: Custom IPS LCD ST.2084 PQ tone-map curve (1:1 up to knee + smooth roll-off)
 
-License: MIT
+SPDX-License-Identifier: GPL-3.0-only
 """
 
 from __future__ import annotations

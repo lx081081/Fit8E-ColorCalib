@@ -6,7 +6,7 @@ Uses CIE Daylight illuminant locus + CIE 1960 UCS perpendicular Duv tint +
 Bradford Chromatic Adaptation to synthesize SM8750P Version 3 HPM 17^3 3D LUTs
 and synchronized HDR10 PQ tone-mapping in <0.15s using pure Python stdlib.
 
-License: MIT
+SPDX-License-Identifier: GPL-3.0-only
 """
 
 from __future__ import annotations
