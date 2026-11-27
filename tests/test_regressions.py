@@ -355,6 +355,9 @@ class ProfileTests(unittest.TestCase):
             for p in created:
                 self.assertNotIn(" ", p.name)
                 self.assertLess(p.stat().st_size, root_script.MAX_AYA_ROOT_SCRIPT_BYTES)
+                if p.suffix == ".sh":
+                    self.assertFalse(p.read_bytes().startswith(b"\xef\xbb\xbf"))
+            self.assertTrue((out_dir / "使用说明_README.txt").read_bytes().startswith(b"\xef\xbb\xbf"))
             # Export must never overwrite protected project files
             base_copy = Path(tmp) / "base.json"
             base_copy.write_bytes(d65_bytes)

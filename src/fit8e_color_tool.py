@@ -139,7 +139,7 @@ STRINGS = {
         "msg_done_export": "已导出硬件校色 JSON（{cct}K / 色调 {tint}）：\n{path}",
         "msg_done_export_sh": (
             "已导出掌机一键 Root 脚本（{profile_desc}，{size_kb:.1f} KB）：\n{path}\n\n"
-            "用法：复制到掌机内部存储（路径和文件名勿含空格）→ 打开 AYASettings → Root 脚本 → 选中并点击【整体运行】→ 完成后手动重启。"
+            "用法：复制到掌机内部存储（路径和文件名勿含空格）→ AYASettings → 设备 → Root 脚本 → 点「+」后在左侧选「Pocket FIT Elite」（勿选最近）→ 确认文件名称不为空后点击【整体运行】→ 完成后手动重启。"
         ),
         "info_line_fmt": "{soc}  ·  {panel}  ·  色彩管理: {cm}  ·  当前管线: {mode}",
     },
@@ -233,7 +233,7 @@ STRINGS = {
         "msg_done_export": "Exported hardware calibration JSON ({cct}K / Tint {tint}):\n{path}",
         "msg_done_export_sh": (
             "Exported handheld Root Script ({profile_desc}, {size_kb:.1f} KB):\n{path}\n\n"
-            "Usage: Copy to handheld storage (no spaces in path/filename) -> AYASettings -> Root Script -> tap Run File (整体运行) -> reboot manually."
+            "Usage: Copy to handheld storage (no spaces in path/filename) -> AYASettings -> Device -> Root Script -> tap '+' and pick 'Pocket FIT Elite' on the left (NOT Recent) -> confirm filename is not empty -> tap Run File (整体运行) -> reboot manually."
         ),
         "info_line_fmt": "{soc}  ·  {panel}  ·  Color Mgmt: {cm}  ·  Pipeline: {mode}",
     },

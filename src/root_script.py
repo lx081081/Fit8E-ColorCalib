@@ -305,16 +305,16 @@ def build_preset_bundle(base_json: Path, helper_path: Path, out_dir: Path) -> li
         "特点：无需电脑、无需开 USB 调试、无需 Shizuku，每个 .sh 均为单文件自包含脚本，与电脑版工具完全互通。\n\n"
         "一、安装校色步骤\n"
         "1. 将本目录中的脚本解压到掌机内部存储（推荐 /sdcard/Download/Fit8E/，注意路径和文件名不要包含空格）。\n"
-        "2. 打开掌机内置「AYASettings」-> 进入「Root 脚本」功能。\n"
-        "3. 点击选择文件，挑选想要的色温预设脚本：\n"
+        "2. 打开掌机内置「AYASettings」->「设备」->「Root 脚本」-> 点击中间「+」打开文件选择器。\n"
+        "3. 【关键】点击左上角菜单展开左侧边栏，务必选择左侧的「Pocket FIT Elite」（不要选「最近」，否则系统文件管理器会返回空路径），再进入解压目录挑选想要的色温预设脚本：\n"
         "   - 01_Fit8E_安装校色_6500K_D65标准.sh  （CIE 2015 2° 实测 D65 标准，推荐）\n"
         "   - 02_Fit8E_安装校色_6000K_暖色.sh     （护眼微暖）\n"
         "   - 03_Fit8E_安装校色_6800K_微冷.sh     （略微清冷通透）\n"
         "   - 04_Fit8E_安装校色_7100K_冷白.sh     （更偏向传统冷白）\n"
-        "4. 务必点击【整体运行】（不要点「逐行运行」）。\n"
+        "4. 返回「Root 脚本」页面后，先确认输入框中已显示脚本路径/文件名称且不为空（底部按钮亮红），然后务必点击【整体运行】（不要点「逐行运行」）。\n"
         "5. 等待结果弹窗提示「安装成功」后，【手动重启掌机】即自动生效。\n\n"
         "二、切换色彩模式（重启激活后实时生效，无需再重启）\n"
-        "同样在「Root 脚本」中选中以下脚本并点【整体运行】：\n"
+        "按同样步骤在「Root 脚本」中选中以下脚本（确认路径非空）并点【整体运行】：\n"
         "   - 10_Fit8E_切换模式0_自然标准.sh      （sRGB/P3 参考色准 + HDR10 PQ）\n"
         "   - 11_Fit8E_切换模式3_自适应鲜艳.sh    （sRGB 鲜艳+肤色保护，P3/HDR10 自动切换）\n"
         "   - 12_Fit8E_切换模式1_增强模式.sh      （sRGB 全局微提饱和）\n"
@@ -325,11 +325,13 @@ def build_preset_bundle(base_json: Path, helper_path: Path, out_dir: Path) -> li
         "---------------------------------------------------------------------\n"
         f"English Quick Guide (v{APP_VERSION})\n"
         "1. Extract these .sh files to internal storage (no spaces in path/filename, e.g. /sdcard/Download/Fit8E/).\n"
-        "2. Open AYASettings -> Root Script -> pick a preset install script (01..04).\n"
-        "3. Tap Run File (整体运行), NOT Run Line-by-Line (逐行运行).\n"
-        "4. Reboot manually after the success popup. Use scripts 10..13 to switch modes live without rebooting,\n"
+        "2. Open AYASettings -> Device -> Root Script -> tap '+' to open the file picker.\n"
+        "3. IMPORTANT: Open the left sidebar and pick 'Pocket FIT Elite' (do NOT pick 'Recent', which returns an empty path), then browse to your preset script (01..04).\n"
+        "4. Back on the Root Script dialog, confirm the filename/path field is NOT empty (buttons turn red), then tap Run File (整体运行), NOT Run Line-by-Line (逐行运行).\n"
+        "5. Reboot manually after the success popup. Use scripts 10..13 to switch modes live without rebooting,\n"
         "   script 20 to inspect status, and script 99 to restore factory state (then reboot manually).\n"
     )
-    _atomic_write(guide_path, guide_text.encode("utf-8"))
+    # Use UTF-8 with BOM so Android Chrome / Windows Notepad decode local text/plain as UTF-8 instead of GBK.
+    _atomic_write(guide_path, guide_text.encode("utf-8-sig"))
     created.append(guide_path)
     return created
