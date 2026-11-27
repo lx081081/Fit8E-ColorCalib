@@ -19,12 +19,12 @@ SPDX-License-Identifier: GPL-3.0-only
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
-import os
-import subprocess
 import shlex
 import sys
+import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
@@ -62,6 +62,140 @@ def mat_inv(M):
         [(f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det],
         [(d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det],
     ]
+
+
+# ---------- OKLab Adaptive Vibrant Transform (Mode 3 Enhance, P3-D65 Neutral-Invariant) ----------
+_M_P3_1 = [[v / 100.0 for v in row] for row in M_P3]
+_M_P3_1_INV = mat_inv(_M_P3_1)
+_M_SRGB_1 = [[v / 100.0 for v in row] for row in M_SRGB]
+_M_S2P_RAW = mat_mul(_M_P3_1_INV, _M_SRGB_1)
+_M_SRGB_TO_P3 = [[v / sum(row) for v in row] for row in _M_S2P_RAW]
+
+_M_XYZ_TO_LMS_RAW = [
+    [ 0.8189330101,  0.3618667424, -0.1288597137],
+    [ 0.0329845436,  0.9293118715,  0.0361456387],
+    [ 0.0482003018,  0.2643662691,  0.6338517070],
+]
+_W_P3_1 = mat_vec(_M_P3_1, (1.0, 1.0, 1.0))
+_LMS_W_P3 = mat_vec(_M_XYZ_TO_LMS_RAW, _W_P3_1)
+_M_XYZ_TO_LMS = [[_M_XYZ_TO_LMS_RAW[i][j] / _LMS_W_P3[i] for j in range(3)] for i in range(3)]
+_M_LMS_TO_XYZ = mat_inv(_M_XYZ_TO_LMS)
+_M_P3_TO_LMS = mat_mul(_M_XYZ_TO_LMS, _M_P3_1)
+_M_LMS_TO_P3 = mat_mul(_M_P3_1_INV, _M_LMS_TO_XYZ)
+_M_LMS_TO_OKLAB = [
+    [ 0.2104542553,  0.7936177850, -0.0040720468],
+    [ 1.9779984951, -2.4285922050,  0.4505937099],
+    [ 0.0259040371,  0.7827717662, -0.8086757660],
+]
+_M_OKLAB_TO_LMS = mat_inv(_M_LMS_TO_OKLAB)
+
+
+def _cbrt(x: float) -> float:
+    return math.copysign(abs(x) ** (1.0 / 3.0), x) if x != 0.0 else 0.0
+
+
+def _p3_to_oklab(rgb: tuple[float, float, float] | list[float]) -> list[float]:
+    l, m, s = mat_vec(_M_P3_TO_LMS, rgb)
+    return mat_vec(_M_LMS_TO_OKLAB, (_cbrt(l), _cbrt(m), _cbrt(s)))
+
+
+def _oklab_to_p3(L: float, a: float, b: float) -> list[float]:
+    lc, mc, sc = mat_vec(_M_OKLAB_TO_LMS, (L, a, b))
+    return mat_vec(_M_LMS_TO_P3, (lc * lc * lc, mc * mc * mc, sc * sc * sc))
+
+
+def _in_p3_cube(L: float, a: float, b: float) -> bool:
+    r, g, bl = _oklab_to_p3(L, a, b)
+    return (-1e-6 <= r <= 1.0 + 1e-6) and (-1e-6 <= g <= 1.0 + 1e-6) and (-1e-6 <= bl <= 1.0 + 1e-6)
+
+
+def _max_chroma_p3(L: float, ca: float, cb: float) -> float:
+    if L <= 1e-6 or L >= 1.0 - 1e-6:
+        return 0.0
+    lo, hi = 0.0, 0.45
+    while hi < 0.70 and _in_p3_cube(L, hi * ca, hi * cb):
+        lo = hi
+        hi *= 1.4
+    for _ in range(15):
+        mid = 0.5 * (lo + hi)
+        if _in_p3_cube(L, mid * ca, mid * cb):
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def _skin_weight(h_deg: float, chroma: float) -> float:
+    """Smooth hue- and chroma-gated skin-tone protection in OKLab."""
+    dh = abs((h_deg - 50.0 + 180.0) % 360.0 - 180.0)
+    hw = math.exp(-0.5 * (dh / 22.0) ** 2)
+    cw = math.exp(-0.5 * (max(0.0, chroma - 0.09) / 0.06) ** 2)
+    return hw * cw
+
+
+def transform_srgb_enhance_to_p3(
+    rgb_srgb: tuple[float, float, float],
+    gamut_expand: float = 0.68,
+    skin_expand: float = 0.18,
+    vib_k: float = 1.22,
+    skin_k: float = 1.04,
+) -> list[float]:
+    """Adaptive Vibrant sRGB -> linear Display P3 (Mode 3 sRGB_Enhance)."""
+    r, g, b = rgb_srgb
+    if max(abs(r - g), abs(g - b), abs(r - b)) <= 1e-7:
+        return [r, g, b]
+    p3_exact = [max(0.0, min(1.0, v)) for v in mat_vec(_M_SRGB_TO_P3, (r, g, b))]
+    L0, a0, b0 = _p3_to_oklab(p3_exact)
+    C0 = math.hypot(a0, b0)
+    if C0 <= 1e-7:
+        return p3_exact
+    h0 = math.degrees(math.atan2(b0, a0)) % 360.0
+    sw = _skin_weight(h0, C0)
+    alpha = gamut_expand - (gamut_expand - skin_expand) * sw
+    p3_exp = [
+        p3_exact[0] + alpha * (r - p3_exact[0]),
+        p3_exact[1] + alpha * (g - p3_exact[1]),
+        p3_exact[2] + alpha * (b - p3_exact[2]),
+    ]
+    L1, a1, b1 = _p3_to_oklab(p3_exp)
+    C1 = math.hypot(a1, b1)
+    if C1 <= 1e-7 or L1 <= 1e-6 or L1 >= 1.0 - 1e-6:
+        return [max(0.0, min(1.0, v)) for v in p3_exp]
+    ca1, cb1 = a1 / C1, b1 / C1
+    c_max = _max_chroma_p3(L1, ca1, cb1)
+    if c_max <= C1 + 1e-7:
+        return [max(0.0, min(1.0, v)) for v in p3_exp]
+    k_eff = vib_k - (vib_k - skin_k) * sw
+    t = min(1.0, C1 / c_max)
+    t_new = 1.0 - (1.0 - t) ** k_eff
+    out = _oklab_to_p3(L1, (t_new * c_max) * ca1, (t_new * c_max) * cb1)
+    return [max(0.0, min(1.0, v)) for v in out]
+
+
+def transform_p3_enhance_to_p3(
+    rgb_p3: tuple[float, float, float],
+    vib_k: float = 1.30,
+    skin_k: float = 1.06,
+) -> list[float]:
+    """Adaptive Vibrant Display P3 / HDR10 -> linear Display P3 (Mode 3 P3_Enhance / HDR_Enhance)."""
+    r, g, b = rgb_p3
+    if max(abs(r - g), abs(g - b), abs(r - b)) <= 1e-7:
+        return [r, g, b]
+    L, a, ob = _p3_to_oklab((r, g, b))
+    C = math.hypot(a, ob)
+    if C <= 1e-7 or L <= 1e-6 or L >= 1.0 - 1e-6:
+        return [r, g, b]
+    ca, cb = a / C, ob / C
+    h = math.degrees(math.atan2(ob, a)) % 360.0
+    sw = _skin_weight(h, C)
+    k_eff = vib_k - (vib_k - skin_k) * sw
+    c_max = _max_chroma_p3(L, ca, cb)
+    if c_max <= C + 1e-7:
+        return [max(0.0, min(1.0, v)) for v in (r, g, b)]
+    t = min(1.0, C / c_max)
+    t_new = 1.0 - (1.0 - t) ** k_eff
+    out = _oklab_to_p3(L, (t_new * c_max) * ca, (t_new * c_max) * cb)
+    return [max(0.0, min(1.0, v)) for v in out]
 
 
 def srgb_eotf(x: float) -> float:
@@ -412,6 +546,9 @@ def generate_qdcm_v3(
     if not all(math.isfinite(v) for v in (gamma_nudge, hdr_peak, hdr_knee, hdr_min)) or not (
             gamma_nudge > 0 and 0 <= hdr_min < hdr_knee < hdr_peak):
         raise ValueError("Use a positive gamma adjustment and finite 0 <= black < knee < peak.")
+    if out_path.resolve() == template_path.resolve() or (
+            out_path.exists() and template_path.exists() and out_path.samefile(template_path)):
+        raise ValueError("Choose an output path separate from the template JSON.")
     verify_rows = load_ti3(verify_ti3) if verify_ti3 is not None else None
     rows = load_ti3(ti3_path)
     response = characterize_panel(rows, cl_gain)
@@ -461,7 +598,7 @@ def generate_qdcm_v3(
     ]
     print(f"{'Native D65':10s}: W_lin={[round(x,4) for x in mat_vec(M_native_map,[1,1,1])]}")
 
-    def build_gamut_csv(M_map) -> str:
+    def build_gamut_csv(M_map, pre_transform=None) -> str:
         vals = []
         for b_i in range(17):
             b = b_i / 16.0
@@ -469,7 +606,8 @@ def generate_qdcm_v3(
                 g = g_i / 16.0
                 for r_i in range(17):
                     r = r_i / 16.0
-                    lin = mat_vec(M_map, [r, g, b])
+                    src = pre_transform((r, g, b)) if pre_transform is not None else [r, g, b]
+                    lin = mat_vec(M_map, src)
                     for c in range(3):
                         yc = max(0.0, min(1.0, lin[c]))
                         vc = pchip_interp(trc_y[c], trc_x, [yc])[0]
@@ -480,6 +618,8 @@ def generate_qdcm_v3(
     gamut_native_csv = build_gamut_csv(M_native_map)
     gamut_p3_csv = build_gamut_csv(M_p3_map)
     gamut_srgb_csv = build_gamut_csv(M_srgb_map)
+    gamut_p3_enh_csv = build_gamut_csv(M_p3_map, transform_p3_enhance_to_p3)
+    gamut_srgb_enh_csv = build_gamut_csv(M_p3_map, transform_srgb_enhance_to_p3)
 
     # Optional digital pipeline simulation
     if verify_rows is not None:
@@ -547,10 +687,23 @@ def generate_qdcm_v3(
 
     common_igc = {"Predefined": {"Rec601": ",".join(map(str, igc_385)) + ","}, "numEntries": 385}
     common_gc = {"Predefined": {"Rec601noDither": ",".join(map(str, gc_1280)) + ","}, "numEntries": 1280}
-    common_gamut = {"Custom": {"0": gamut_native_csv, "1": gamut_p3_csv, "2": gamut_srgb_csv}, "numEntries": 4913}
+    common_gamut = {
+        "Custom": {
+            "0": gamut_native_csv,
+            "1": gamut_p3_csv,
+            "2": gamut_srgb_csv,
+            "3": gamut_p3_enh_csv,
+            "4": gamut_srgb_enh_csv,
+        },
+        "numEntries": 4913,
+    }
 
-    def make_v3_mode(src_mode: dict, gamut_id: int) -> dict:
-        m = dict(src_mode)
+    def make_v3_mode(src_mode: dict, gamut_id: int, render_intent: int | None = None, intent_name: str | None = None) -> dict:
+        m = copy.deepcopy(src_mode)
+        if render_intent is not None:
+            m["Applicability"]["RenderIntent"] = render_intent
+        if intent_name is not None:
+            m["Applicability"]["RenderIntentName"] = intent_name
         m["PostBlendIGC"] = enc_obj({
             "HPM": True, "Predefined": "Rec601", "displayID": 0,
             "ditherEnable": True, "ditherStrength": 4, "enable": True, "numEntries": 385,
@@ -568,8 +721,11 @@ def generate_qdcm_v3(
         m["PostBlendDither"] = enc_obj(dith)
         return m
 
+    hdr_blob_enc = enc_obj(build_hdr_blob(hdr_peak, hdr_knee, hdr_min))
     hdr_mode = make_v3_mode(src_panel["HDR"], 1)
-    hdr_mode["PostBlendHdrBlob"] = enc_obj(build_hdr_blob(hdr_peak, hdr_knee, hdr_min))
+    hdr_mode["PostBlendHdrBlob"] = hdr_blob_enc
+    hdr_enh_mode = make_v3_mode(src_panel["HDR"], 3, render_intent=2, intent_name="Enhance")
+    hdr_enh_mode["PostBlendHdrBlob"] = hdr_blob_enc
 
     out_json = {
         "Copyright": ref.get("Copyright", "Copyright (c) Qualcomm Technologies, Inc."),
@@ -584,12 +740,21 @@ def generate_qdcm_v3(
             "P3": make_v3_mode(src_panel["P3"], 1),
             "HDR": hdr_mode,
             "Native": make_v3_mode(src_panel["Native"], 0),
+            "sRGB_Enhance": make_v3_mode(src_panel["sRGB"], 4, render_intent=2, intent_name="Enhance"),
+            "P3_Enhance": make_v3_mode(src_panel["P3"], 3, render_intent=2, intent_name="Enhance"),
+            "HDR_Enhance": hdr_enh_mode,
         },
     }
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(out_json, f, indent="\t")
+    payload = json.dumps(out_json, indent="\t").encode("utf-8")
+    with tempfile.NamedTemporaryFile(dir=out_path.parent, delete=False) as staged:
+        temp_path = Path(staged.name)
+    try:
+        temp_path.write_bytes(payload)
+        temp_path.replace(out_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
     print(f"\nWrote SM8750P V3 HPM QDCM JSON -> {out_path} ({out_path.stat().st_size} bytes)")
 
 

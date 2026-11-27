@@ -32,6 +32,7 @@ if str(_THIS_DIR) not in sys.path:
     sys.path.insert(0, str(_THIS_DIR))
 
 import color_engine  # noqa: E402
+import root_script  # noqa: E402
 from fit8e_version import APP_VERSION  # noqa: E402
 
 PANEL_FILENAME = "qdcm_calib_data_ar14_1080p_144hz_video_mode_dsi_panel.json"
@@ -61,6 +62,7 @@ STRINGS = {
         "btn_install_only": "仅安装（稍后重启）",
         "btn_uninstall": "卸载并还原原厂",
         "btn_export": "导出 JSON",
+        "btn_export_sh": "导出 Root 脚本",
         "btn_browse": "自定义 JSON...",
         "btn_reset_profile": "恢复默认",
         "chk_force": "已手动核实 ar14 面板",
@@ -94,11 +96,13 @@ STRINGS = {
         "st_panel_mismatch": "Fit 8E · 面板不匹配",
         "badge_rec": "推荐",
         "mode_0_title": "自然标准",
-        "mode_0_desc": "SDR 使用 sRGB 或 Display P3\nHDR10 使用 PQ 高光映射",
+        "mode_0_desc": "sRGB / P3 精准色准\nHDR10 原生 PQ 映射",
         "mode_1_title": "增强模式",
-        "mode_1_desc": "提高画面饱和度\n标准白点均衡输出",
+        "mode_1_desc": "sRGB 全局微提饱和\n标准白点均衡输出",
         "mode_2_title": "鲜艳模式",
-        "mode_2_desc": "面板原生广色域\n使用所选白点",
+        "mode_2_desc": "面板原生广色域直出\n使用所选硬件白点",
+        "mode_3_title": "自适应鲜艳",
+        "mode_3_desc": "sRGB 鲜艳并保护肤色\nP3 / HDR10 自动管理",
         "mode_active_tag": "当前生效",
         "confirm_install_title": "确认安装硬件校色",
         "confirm_install_msg": (
@@ -116,6 +120,8 @@ STRINGS = {
             "完成后掌机将自动重启。是否继续？"
         ),
         "err_no_adb": "未找到 adb.exe · 请将 platform-tools 放在程序同目录或配置 PATH",
+        "pill_no_adb": "ADB 缺失",
+        "err_missing_json": "(未找到校色 JSON)",
         "err_no_json": "找不到校色 JSON 文件：",
         "err_wrong_device": (
             "{reason}\n"
@@ -131,6 +137,10 @@ STRINGS = {
         "msg_no_install": "设备上没有已安装的校色档。",
         "msg_done_uninstall": "已恢复原有档案及显示模式，并发送重启指令。",
         "msg_done_export": "已导出硬件校色 JSON（{cct}K / 色调 {tint}）：\n{path}",
+        "msg_done_export_sh": (
+            "已导出掌机一键 Root 脚本（{profile_desc}，{size_kb:.1f} KB）：\n{path}\n\n"
+            "用法：复制到掌机内部存储（路径和文件名勿含空格）→ 打开 AYASettings → Root 脚本 → 选中并点击【整体运行】→ 完成后手动重启。"
+        ),
         "info_line_fmt": "{soc}  ·  {panel}  ·  色彩管理: {cm}  ·  当前管线: {mode}",
     },
     "en": {
@@ -146,6 +156,7 @@ STRINGS = {
         "btn_install_only": "Install Only",
         "btn_uninstall": "Uninstall & Restore",
         "btn_export": "Export JSON",
+        "btn_export_sh": "Export Root .sh",
         "btn_browse": "Custom JSON...",
         "btn_reset_profile": "Reset Default",
         "chk_force": "I verified the ar14 panel",
@@ -179,11 +190,13 @@ STRINGS = {
         "st_panel_mismatch": "Fit 8E · Panel mismatch",
         "badge_rec": "Rec.",
         "mode_0_title": "Natural",
-        "mode_0_desc": "SDR in sRGB or Display P3\nHDR10 with PQ tone mapping",
+        "mode_0_desc": "Accurate sRGB & P3\nHDR10 PQ tone map",
         "mode_1_title": "Boosted",
-        "mode_1_desc": "Increased saturation\nBalanced calibrated whitepoint",
+        "mode_1_desc": "Mild sRGB saturation\nBalanced white point",
         "mode_2_title": "Vivid",
-        "mode_2_desc": "Native wide gamut\nUses the selected white point",
+        "mode_2_desc": "Native wide gamut\nUses chosen white point",
+        "mode_3_title": "Adaptive",
+        "mode_3_desc": "Vivid sRGB, safe skin\nAuto P3 & HDR10 mgmt",
         "mode_active_tag": "Active",
         "confirm_install_title": "Confirm Calibration Install",
         "confirm_install_msg": (
@@ -201,6 +214,8 @@ STRINGS = {
             "The handheld will reboot automatically. Proceed?"
         ),
         "err_no_adb": "adb binary not found · Place platform-tools next to this app or in PATH",
+        "pill_no_adb": "ADB Missing",
+        "err_missing_json": "(Calibration JSON missing)",
         "err_no_json": "Calibration JSON not found: ",
         "err_wrong_device": (
             "{reason}\n"
@@ -216,6 +231,10 @@ STRINGS = {
         "msg_no_install": "No installed calibration profile.",
         "msg_done_uninstall": "Previous calibration and display mode restored. Reboot requested.",
         "msg_done_export": "Exported hardware calibration JSON ({cct}K / Tint {tint}):\n{path}",
+        "msg_done_export_sh": (
+            "Exported handheld Root Script ({profile_desc}, {size_kb:.1f} KB):\n{path}\n\n"
+            "Usage: Copy to handheld storage (no spaces in path/filename) -> AYASettings -> Root Script -> tap Run File (整体运行) -> reboot manually."
+        ),
         "info_line_fmt": "{soc}  ·  {panel}  ·  Color Mgmt: {cm}  ·  Pipeline: {mode}",
     },
 }
@@ -257,6 +276,12 @@ def find_default_json() -> Optional[Path]:
     return None
 
 
+def find_helper_script() -> Optional[Path]:
+    base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else _THIS_DIR.parent
+    p = base / "scripts" / "fit8e_calib_shizuku.sh"
+    return p if p.is_file() else None
+
+
 def export_profile(base: Path, destination: Path, cct: int, tint: int):
     if destination.resolve() == base.resolve() or (destination.exists() and destination.samefile(base)):
         raise ValueError("Choose an export path separate from the built-in calibration JSON.")
@@ -270,6 +295,28 @@ def export_profile(base: Path, destination: Path, cct: int, tint: int):
     finally:
         temp_path.unlink(missing_ok=True)
     return len(raw), preview
+
+
+def export_root_script_file(
+    base: Path,
+    destination: Path,
+    cct: Optional[int] = 6500,
+    tint: int = 0,
+    *,
+    helper_path: Optional[Path] = None,
+) -> tuple[int, Optional[dict]]:
+    helper = helper_path or find_helper_script()
+    if not helper or not helper.is_file():
+        raise FileNotFoundError("Device helper scripts/fit8e_calib_shizuku.sh is unavailable.")
+    if cct is None:
+        root_script._guard_destination(destination, base, helper)
+        raw = base.read_bytes()
+        script_bytes = root_script.build_install_root_script(
+            helper.read_bytes(), raw, label_zh=base.name, label_en=base.name
+        )
+        root_script._atomic_write(destination, script_bytes)
+        return len(script_bytes), None
+    return root_script.export_install_root_script(base, helper, destination, cct, tint)
 
 
 def find_app_icon() -> Optional[Path]:
@@ -403,14 +450,33 @@ class AdbClient:
             script = (base / "scripts" / "fit8e_calib_shizuku.sh").read_bytes().replace(b"\r\n", b"\n")
         except OSError as exc:
             return 1, "", f"Device helper unavailable: {exc}"
-        command = shlex.join(["sh", "-s", "--", *args])
+        profile_operation = args[0] in ("install", "uninstall")
+        timeout = 120 if profile_operation else 40
         if root:
             if root not in ("su", "xsu"):
                 return 1, "", "Unrecognized root command"
-            command = shlex.join([root, "-c", command])
-        profile_operation = args[0] in ("install", "uninstall")
-        timeout = 120 if profile_operation else 40
-        rc, out, err = self.run(["shell", "-T", command], timeout, serial=serial, stdin=script)
+            # Stage the helper to a temp file because OEM root wrappers (e.g. xsu/xsud)
+            # do not forward stdin, which would cause `sh -s` to exit 0 as a silent no-op.
+            rc_m, out_m, err_m = self.run(["shell", "mktemp /data/local/tmp/fit8e-helper.XXXXXXXX"], serial=serial)
+            remote_helper = out_m.strip()
+            if rc_m or not re.fullmatch(r"/data/local/tmp/fit8e-helper\.[a-zA-Z0-9]+", remote_helper):
+                return 1, "", f"Cannot stage elevated helper: {(err_m or out_m).strip()}"
+            try:
+                with tempfile.TemporaryDirectory(prefix="fit8e-helper-") as folder:
+                    local_helper = Path(folder) / "helper.sh"
+                    local_helper.write_bytes(script)
+                    rc_p, out_p, err_p = self.run(["push", str(local_helper), remote_helper], 30, serial=serial)
+                if rc_p:
+                    return 1, "", f"Elevated helper transfer failed: {(err_p or out_p).strip()}"
+                command = shlex.join([root, "-c", shlex.join(["sh", remote_helper, *args])])
+                rc, out, err = self.run(["shell", "-T", command], timeout, serial=serial)
+            finally:
+                rc_c, out_c, err_c = self.run(["shell", "rm -f " + remote_helper], serial=serial)
+                if rc_c:
+                    self.log(f"[ADB] Unable to clear helper {remote_helper}: {(err_c or out_c).strip()}")
+        else:
+            command = shlex.join(["sh", "-s", "--", *args])
+            rc, out, err = self.run(["shell", "-T", command], timeout, serial=serial, stdin=script)
         if rc == 124 and profile_operation:
             err = STRINGS[self.language]["err_profile_timeout"].format(seconds=timeout)
         elif rc == 5:
@@ -522,6 +588,8 @@ class AdbClient:
         detail = (out + "\n" + err).strip()
         if rc:
             return False, detail or f"Device operation failed ({rc})"
+        if not detail:
+            return False, "Device helper exited without reporting a result."
         if reboot and not detail.startswith("UNCHANGED:"):
             return self._reboot(st, detail)
         if detail:
@@ -579,7 +647,7 @@ class AdbClient:
             return False, str(exc)
 
     def set_mode(self, mode: int, *, serial: Optional[str] = None, force: bool = False) -> tuple[bool, str]:
-        if mode not in (0, 1, 2):
+        if mode not in (0, 1, 2, 3):
             return False, f"Invalid mode: {mode}"
         st = self.probe(serial)
         error = self.target_error(st, force)
@@ -747,6 +815,7 @@ def launch_gui(serial: Optional[str] = None) -> int:
             self.active_mode_id: Optional[int] = None
             self.status = DeviceStatus()
             self.log_q: queue.Queue[str] = queue.Queue()
+            self._hover_defaults: dict[tk.Button, str] = {}
             self.client = AdbClient(log_fn=self._enqueue_log, serial=serial, language=self.lang)
 
             self.cct_var = tk.IntVar(value=6500)
@@ -802,12 +871,12 @@ def launch_gui(serial: Optional[str] = None) -> int:
             self.after(100, self._poll_log_queue)
 
         def _bind_hover(self, btn: tk.Button, normal_bg: str, hover_bg: str) -> None:
+            self._hover_defaults[btn] = normal_bg
             def on_enter(_e):
                 if str(btn["state"]) != "disabled":
                     btn.configure(bg=hover_bg)
             def on_leave(_e):
-                if str(btn["state"]) != "disabled":
-                    btn.configure(bg=normal_bg)
+                btn.configure(bg=normal_bg)
             btn.bind("<Enter>", on_enter)
             btn.bind("<Leave>", on_leave)
 
@@ -1055,12 +1124,17 @@ def launch_gui(serial: Optional[str] = None) -> int:
                 bg=C_SUB, fg=C_TEXT2, hover_bg=C_SUB_H, border=None, padx=9, pady=2, font_size=8
             )
             w_exp.pack(side="right", padx=(6, 0))
+            w_sh, self.btn_export_sh = self._btn(
+                prof_row, self.t("btn_export_sh"), self._export_root_script,
+                bg=C_SUB, fg=C_TEXT2, hover_bg=C_SUB_H, border=None, padx=9, pady=2, font_size=8
+            )
+            w_sh.pack(side="right", padx=(6, 0))
             self.lbl_prof_k = tk.Label(prof_row, text=self.t("lbl_profile"), bg=C_WHITE, fg=C_MUTED, font=(FONT_UI, 8))
             self.lbl_prof_k.pack(side="left")
             self.lbl_prof_v = tk.Label(prof_row, text="", bg=C_WHITE, fg=C_TEXT2, font=(FONT_UI, 8, "bold"), anchor="w")
             self.lbl_prof_v.pack(side="left", fill="x", expand=True, padx=(2, 8))
 
-            # 3. Color Mode Switcher Section (3 Crisp White Tiles)
+            # 3. Color Mode Switcher Section (4 Crisp White Tiles)
             self.hdr_modes = tk.Label(
                 content, text=self.t("sec_modes"), bg=C_BG, fg=C_MUTED,
                 font=(FONT_UI, 8, "bold"), anchor="w"
@@ -1070,26 +1144,26 @@ def launch_gui(serial: Optional[str] = None) -> int:
             mode_grid = tk.Frame(content, bg=C_BG)
             mode_grid.pack(fill="x", pady=(0, 12))
             self.mode_cards: dict[int, dict[str, tk.Widget]] = {}
-            for col in range(3):
+            for col in range(4):
                 mode_grid.grid_columnconfigure(col, weight=1, uniform="mode")
 
-            for m in (0, 1, 2):
+            for col, m in enumerate((0, 1, 2, 3)):
                 cf = tk.Frame(mode_grid, bg=C_WHITE, highlightbackground=C_BORDER, highlightthickness=1, cursor="hand2")
-                cf.grid(row=0, column=m, sticky="nsew", padx=(0 if m == 0 else 10, 0))
+                cf.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 8, 0))
 
                 top_r = tk.Frame(cf, bg=C_WHITE)
-                top_r.pack(fill="x", padx=14, pady=(11, 4))
-                tag_lbl = tk.Label(top_r, text="", bg=C_WHITE, fg=C_GREEN_TX, font=(FONT_UI, 7, "bold"), padx=6, pady=2)
+                top_r.pack(fill="x", padx=11, pady=(10, 4))
+                tag_lbl = tk.Label(top_r, text="", bg=C_WHITE, fg=C_GREEN_TX, font=(FONT_UI, 7, "bold"), padx=5, pady=1)
                 tag_lbl.pack(side="right")
                 t_lbl = tk.Label(top_r, text=self.t(f"mode_{m}_title"), bg=C_WHITE, fg=C_TEXT, font=(FONT_UI, 10, "bold"), anchor="w")
                 t_lbl.pack(side="left")
                 rec_lbl = None
                 if m == 0:
-                    rec_lbl = tk.Label(top_r, text=self.t("badge_rec"), bg=C_BLUE_BG, fg=C_BLUE_TX, font=(FONT_UI, 7, "bold"), padx=6, pady=1)
-                    rec_lbl.pack(side="left", padx=(6, 0))
+                    rec_lbl = tk.Label(top_r, text=self.t("badge_rec"), bg=C_BLUE_BG, fg=C_BLUE_TX, font=(FONT_UI, 7, "bold"), padx=5, pady=1)
+                    rec_lbl.pack(side="left", padx=(5, 0))
 
                 d_lbl = tk.Label(cf, text=self.t(f"mode_{m}_desc"), bg=C_WHITE, fg=C_MUTED, font=(FONT_UI, 8), justify="left", anchor="w")
-                d_lbl.pack(fill="x", padx=14, pady=(0, 11))
+                d_lbl.pack(fill="x", padx=11, pady=(0, 10))
 
                 widgets = [cf, top_r, t_lbl, d_lbl, tag_lbl] + ([rec_lbl] if rec_lbl else [])
                 for w in widgets:
@@ -1197,7 +1271,7 @@ def launch_gui(serial: Optional[str] = None) -> int:
 
         def _update_profile_label(self) -> None:
             if not self.selected_json:
-                self.lbl_prof_v.configure(text="(未找到校色 JSON)", fg=C_RED_TX)
+                self.lbl_prof_v.configure(text=self.t("err_missing_json"), fg=C_RED_TX)
             elif self.is_custom_json:
                 self.lbl_prof_v.configure(text=self.selected_json.name, fg=C_AMBER_TX)
             else:
@@ -1221,6 +1295,7 @@ def launch_gui(serial: Optional[str] = None) -> int:
             self.btn_install_only.configure(text=self.t("btn_install_only"))
             self.btn_uninstall.configure(text=self.t("btn_uninstall"))
             self.btn_export.configure(text=self.t("btn_export"))
+            self.btn_export_sh.configure(text=self.t("btn_export_sh"))
             self.btn_browse.configure(text=self.t("btn_browse"))
             self.btn_reset_prof.configure(text=self.t("btn_reset_profile"))
             self.chk_force.configure(text=self.t("chk_force"))
@@ -1231,7 +1306,7 @@ def launch_gui(serial: Optional[str] = None) -> int:
             self.lbl_tint_k.configure(text=self.t("lbl_tint"))
             for _pv, (_wrap, btn, pkey) in self.preset_widgets.items():
                 btn.configure(text=self.t(pkey))
-            for m in (0, 1, 2):
+            for m in (0, 1, 2, 3):
                 c = self.mode_cards[m]
                 c["title"].configure(text=self.t(f"mode_{m}_title"))
                 c["desc"].configure(text=self.t(f"mode_{m}_desc"))
@@ -1277,7 +1352,39 @@ def launch_gui(serial: Optional[str] = None) -> int:
             try:
                 export_profile(self.default_json, Path(out_path), cct, tint)
                 self._enqueue_log(f"[Export] Saved {cct}K / Tint {tint:+d} -> {out_path}")
-                messagebox.showinfo("OK", self.t("msg_done_export").format(cct=cct, tint=tint, path=out_path))
+                messagebox.showinfo("OK", self.t("msg_done_export").format(cct=cct, tint=f"{tint:+d}" if tint else "0", path=out_path))
+            except Exception as exc:
+                messagebox.showerror("Export Failed", str(exc))
+
+        def _export_root_script(self) -> None:
+            src_json = self.selected_json if self.is_custom_json else self.default_json
+            if not src_json or not src_json.is_file():
+                messagebox.showerror("Error", self.t("err_no_json") + str(src_json))
+                return
+            if self.is_custom_json:
+                cct, tint = None, 0
+                stem = re.sub(r"\s+", "_", src_json.stem)
+                default_name = f"Fit8E_安装校色_{stem}_v{APP_VERSION}.sh"
+            else:
+                cct = int(self.cct_var.get())
+                tint = int(self.tint_var.get())
+                default_name = root_script.default_install_script_name(cct, tint)
+            out_path = filedialog.asksaveasfilename(
+                title="Export AYASettings Root Script (.sh)",
+                initialfile=default_name,
+                defaultextension=".sh",
+                filetypes=[("Shell Script", "*.sh")],
+            )
+            if not out_path:
+                return
+            try:
+                size, _ = export_root_script_file(src_json, Path(out_path), cct, tint)
+                desc = self._current_profile_desc()
+                self._enqueue_log(f"[Export Root .sh] Saved {desc} ({size / 1024:.1f} KB) -> {out_path}")
+                messagebox.showinfo(
+                    "OK",
+                    self.t("msg_done_export_sh").format(profile_desc=desc, size_kb=size / 1024.0, path=out_path),
+                )
             except Exception as exc:
                 messagebox.showerror("Export Failed", str(exc))
 
@@ -1286,6 +1393,8 @@ def launch_gui(serial: Optional[str] = None) -> int:
             st = "disabled" if busy else "normal"
             for b in (self.btn_refresh, self.btn_restart_adb, self.btn_install_reboot, self.btn_install_only, self.btn_uninstall):
                 b.configure(state=st)
+                if busy and b in self._hover_defaults:
+                    b.configure(bg=self._hover_defaults[b])
 
         def _run_async(self, fn: Callable, on_done: Optional[Callable] = None) -> None:
             if self.busy:
@@ -1324,7 +1433,7 @@ def launch_gui(serial: Optional[str] = None) -> int:
         def _render_status(self, st: DeviceStatus) -> None:
             self.status = st
             if not st.adb_path:
-                self.status_pill.configure(text="ADB 缺失", bg=C_RED_BG, fg=C_RED_TX)
+                self.status_pill.configure(text=self.t("pill_no_adb"), bg=C_RED_BG, fg=C_RED_TX)
                 self.lbl_dev_name.configure(text=self.t("err_no_adb"), fg=C_RED_TX)
                 self.lbl_dev_meta.configure(text="")
                 self.lbl_md5_tag.configure(text="")
@@ -1444,7 +1553,10 @@ def launch_gui(serial: Optional[str] = None) -> int:
 
             def task():
                 ok, detail = self.client.install(json_path, force=force, reboot=reboot, cct=cct, tint=tint, serial=selected_serial)
-                new_st = self.client.probe(selected_serial)
+                if ok and reboot and not detail.startswith("UNCHANGED:"):
+                    new_st = DeviceStatus(adb_path=self.client.adb, serial=selected_serial, state="disconnected")
+                else:
+                    new_st = self.client.probe(selected_serial)
                 return ok, detail, new_st
 
             def done(res):
@@ -1469,7 +1581,11 @@ def launch_gui(serial: Optional[str] = None) -> int:
 
             def task():
                 ok, detail = self.client.uninstall(reboot=True, serial=selected_serial, force=force, legacy_json=proof)
-                return ok, detail, self.client.probe(selected_serial)
+                if ok and not detail.startswith("UNCHANGED:"):
+                    new_st = DeviceStatus(adb_path=self.client.adb, serial=selected_serial, state="disconnected")
+                else:
+                    new_st = self.client.probe(selected_serial)
+                return ok, detail, new_st
 
             def done(res):
                 ok, detail, new_st = res
@@ -1534,21 +1650,40 @@ def run_cli(argv: list[str]) -> int:
     p_exp.add_argument("--tint", type=int, default=0, help="Tint (-10..+10, default: 0)")
     p_exp.add_argument("--out", type=Path, required=True, help="Output JSON path")
 
+    p_sh = sub.add_parser("export-script", help="Export a self-contained AYASettings Root Script (.sh)")
+    p_sh.add_argument("--action", choices=["install", "mode", "uninstall", "status"], default="install",
+                      help="Script action (default: install)")
+    p_sh.add_argument("--json", type=Path, default=None, help="Custom QDCM V3 JSON (install action only)")
+    p_sh.add_argument("--cct", type=int, default=6500, help="Target CCT (5500..7500, install action only)")
+    p_sh.add_argument("--tint", type=int, default=0, help="Tint (-10..+10, install action only)")
+    p_sh.add_argument("--mode", type=int, choices=[0, 1, 2, 3], default=None, help="Display mode (mode action only)")
+    p_sh.add_argument("--out", type=Path, required=True, help="Output .sh path (avoid spaces for AYASettings)")
+
+    p_pre = sub.add_parser("export-presets", help="Export the complete AYASettings Root Script preset pack")
+    p_pre.add_argument("--out-dir", type=Path, required=True, help="Output directory for preset .sh scripts")
+
     p_un = sub.add_parser("uninstall", help="Remove calibration JSON and restore stock")
     p_un.add_argument("--no-reboot", action="store_true", help="Do not reboot automatically")
 
-    p_mode = sub.add_parser("mode", help="Switch live color mode (0=Natural, 1=Boosted, 2=Vivid)")
-    p_mode.add_argument("value", type=int, choices=[0, 1, 2])
+    p_mode = sub.add_parser("mode", help="Switch live color mode (0=Natural, 1=Boosted, 2=Vivid, 3=Adaptive Vibrant)")
+    p_mode.add_argument("value", type=int, choices=[0, 1, 2, 3])
 
     p_un.add_argument("--legacy-json", type=Path, help="Exact profile used for an untracked legacy installation")
     for command in (p_un, p_mode):
         command.add_argument("--force", action="store_true", help="Confirm a verified ar14 panel if automatic identification is inconclusive")
     args = parser.parse_args(argv)
-    if args.cmd in ("export", "install"):
+    if args.cmd in ("export", "install", "export-script"):
         if not 5500 <= args.cct <= 7500 or not -10 <= args.tint <= 10:
             parser.error("CCT must be 5500..7500 K and tint -10..10")
-        if args.cmd == "install" and args.json and (args.cct != 6500 or args.tint != 0):
+        if args.cmd in ("install", "export-script") and args.json and (args.cct != 6500 or args.tint != 0):
             parser.error("custom JSON already contains its whitepoint; omit --cct and --tint")
+    if args.cmd == "export-script":
+        if args.action == "mode" and args.mode is None:
+            parser.error("--mode 0|1|2|3 is required when --action mode")
+        if args.action != "mode" and args.mode is not None:
+            parser.error("--mode is only valid with --action mode")
+        if args.action != "install" and (args.json or args.cct != 6500 or args.tint != 0):
+            parser.error("--json, --cct and --tint are only valid with --action install")
     if not args.cmd:
         return launch_gui(args.serial)
 
@@ -1563,6 +1698,46 @@ def run_cli(argv: list[str]) -> int:
             print(f"Export failed: {exc}", file=sys.stderr)
             return 2
         print(f"Exported {args.cct}K / Tint {args.tint:+d} (peak {prev['brightness_pct']}%) -> {args.out} ({size} bytes)")
+        return 0
+
+    if args.cmd == "export-script":
+        helper = find_helper_script()
+        if not helper:
+            print("ERROR: Could not find scripts/fit8e_calib_shizuku.sh", file=sys.stderr)
+            return 2
+        try:
+            if args.action == "install":
+                src = args.json or find_default_json()
+                if not src:
+                    print(f"ERROR: Could not find default {PANEL_FILENAME}", file=sys.stderr)
+                    return 2
+                cct = None if args.json else args.cct
+                tint = 0 if args.json else args.tint
+                size, _ = export_root_script_file(src, args.out, cct, tint, helper_path=helper)
+                label = src.name if args.json else f"{args.cct}K / Tint {args.tint:+d}"
+                print(f"Exported AYASettings Root Script ({label}) -> {args.out} ({size} bytes)")
+            else:
+                root_script._guard_destination(args.out, helper)
+                data = root_script.build_action_root_script(helper.read_bytes(), args.action, mode=args.mode)
+                root_script._atomic_write(args.out, data)
+                print(f"Exported AYASettings Root Script ({args.action}) -> {args.out} ({len(data)} bytes)")
+        except (OSError, ValueError) as exc:
+            print(f"Export script failed: {exc}", file=sys.stderr)
+            return 2
+        return 0
+
+    if args.cmd == "export-presets":
+        base = find_default_json()
+        helper = find_helper_script()
+        if not base or not helper:
+            print("ERROR: Missing built-in calibration JSON or device helper script", file=sys.stderr)
+            return 2
+        try:
+            created = root_script.build_preset_bundle(base, helper, args.out_dir)
+        except (OSError, ValueError) as exc:
+            print(f"Export presets failed: {exc}", file=sys.stderr)
+            return 2
+        print(f"Exported {len(created)} AYASettings Root Script files -> {args.out_dir}")
         return 0
 
     client = AdbClient(log_fn=print, serial=args.serial)

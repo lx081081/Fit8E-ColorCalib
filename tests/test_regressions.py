@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import build_qdcm_v3 as compiler
 import color_engine
 import fit8e_color_tool as app
+import root_script
 
 ASSET = ROOT / "assets" / app.PANEL_FILENAME
 HELPER = ROOT / "scripts" / "fit8e_calib_shizuku.sh"
@@ -72,14 +73,95 @@ class ProfileTests(unittest.TestCase):
                     color_engine._content_map(compiler.M_SRGB, equivalent)[0]]
         for slot, mapping in enumerate(mappings):
             self.assertEqual(color_engine._build_gamut_csv(mapping), tables[str(slot)])
-        for cct, tint in ((6499,0),(6500,1),(6000,0),(6800,0),(7100,0),(7500,-10)):
+        # Mode 3 Adaptive Vibrant slots ("3"=P3_Enhance, "4"=sRGB_Enhance) must match dynamic model
+        self.assertEqual(
+            color_engine._build_adaptive_gamut_csv(mappings[1], color_engine._transform_p3_enhance_to_p3),
+            tables["3"],
+        )
+        self.assertEqual(
+            color_engine._build_adaptive_gamut_csv(mappings[1], color_engine._transform_srgb_enhance_to_p3),
+            tables["4"],
+        )
+        # Neutral axis (R=G=B) must be bit-identical between Mode 0 P3 and Mode 3 Enhance LUTs
+        p3_nums = tables["1"].rstrip(",").split(",")
+        for enh_slot in ("3", "4"):
+            enh_nums = tables[enh_slot].rstrip(",").split(",")
+            for i in range(17):
+                idx = (i * 289 + i * 17 + i) * 3
+                self.assertEqual(enh_nums[idx:idx + 3], p3_nums[idx:idx + 3])
+        for cct, tint in ((6450,0),(6500,1),(6000,0),(6800,0),(7100,0),(7500,-10)):
             raw, preview = color_engine.synthesize_qdcm_bytes(ASSET,cct,tint)
             self.assertNotEqual(raw, measured)
             color_engine.validate_qdcm(raw)
             panel = json.loads(raw)[color_engine.PANEL_KEY]
             self.assertEqual(panel["HDR"]["PostBlendGamut"], panel["P3"]["PostBlendGamut"])
+            self.assertEqual(panel["HDR_Enhance"]["PostBlendGamut"], panel["P3_Enhance"]["PostBlendGamut"])
+            self.assertEqual(panel["HDR_Enhance"]["PostBlendHdrBlob"], panel["HDR"]["PostBlendHdrBlob"])
+            for em in color_engine.ENHANCE_MODES:
+                self.assertEqual(panel[em]["Applicability"]["RenderIntent"], 2)
             self.assertEqual(preview, color_engine.estimate_whitepoint_preview(cct,tint))
             self.assertEqual(preview["xy"], color_engine.target_whitepoint_xyz(cct,tint)[1])
+
+    def test_cct_and_tint_consistency_across_all_modes(self):
+        panel = color_engine._PANEL
+        m_rel = color_engine._relative_matrix(panel)
+        k_rel = [v * 100.0 / panel.white[1] for v in panel.black]
+        _, base65_xy = color_engine.target_whitepoint_xyz(6500, 0)
+        _, base65_v60 = color_engine._xy_to_uv60(*base65_xy)
+
+        def white_2015_xy(igc, gc, nums):
+            # Evaluate pure white node (16,16,16) through HPM GC -> panel CIE 2015 2° XYZ
+            idx = (16 * 289 + 16 * 17 + 16) * 3
+            u = [nums[idx + c] / 4095.0 for c in range(3)]
+            v_enc = []
+            for uc in u:
+                p = uc * 1023.0
+                i0 = min(1022, int(p))
+                f = p - i0
+                v_enc.append((gc[i0] * (1.0 - f) + gc[i0 + 1] * f) / 1023.0)
+            lin = [compiler.pchip_interp(panel.levels, panel.channel_curves[c], [v_enc[c]])[0] for c in range(3)]
+            xyz = [color_engine._mat_vec(m_rel, lin)[i] + k_rel[i] for i in range(3)]
+            s = sum(xyz)
+            return xyz[0] / s, xyz[1] / s
+
+        def duv76(xy1, xy2):
+            def uv(x, y):
+                d = -2.0 * x + 12.0 * y + 3.0
+                return 4.0 * x / d, 9.0 * y / d
+            u1, v1 = uv(*xy1)
+            u2, v2 = uv(*xy2)
+            return math.hypot(u1 - u2, v1 - v2)
+
+        for cct, tint in ((5500, -10), (5500, 0), (6500, -10), (6500, 10), (7500, 0), (7500, 10)):
+            raw, _ = color_engine.synthesize_qdcm_bytes(ASSET, cct, tint)
+            doc = json.loads(raw)
+            igc = [int(v) for v in color_engine._dec_raw(doc["Common"]["PostBlendIGC"])["Predefined"]["Rec601"].rstrip(",").split(",")]
+            gc = [int(v) for v in color_engine._dec_raw(doc["Common"]["PostBlendGC"])["Predefined"]["Rec601noDither"].rstrip(",").split(",")]
+            custom = color_engine._dec_raw(doc["Common"]["PostBlendGamut"])["Custom"]
+            _, tgt_xy = color_engine.target_whitepoint_xyz(cct, tint)
+            _, base_xy = color_engine.target_whitepoint_xyz(cct, 0)
+            _, base_v60 = color_engine._xy_to_uv60(*base_xy)
+
+            # Mode 0 P3 and Mode 3 P3_Enhance / sRGB_Enhance share an identical neutral diagonal
+            p3_nums = [int(v) for v in custom["1"].rstrip(",").split(",")]
+            for slot in ("0", "1", "2", "3", "4"):
+                nums = [int(v) for v in custom[slot].rstrip(",").split(",")]
+                w_xy = white_2015_xy(igc, gc, nums)
+                self.assertLess(duv76(w_xy, tgt_xy), 0.00025, f"{cct}K/{tint:+d} slot {slot}")
+                _, w_v60 = color_engine._xy_to_uv60(*w_xy)
+                if tint > 0:
+                    self.assertGreater(w_v60 - base_v60, 0.0020)
+                elif tint < 0:
+                    self.assertLess(w_v60 - base_v60, -0.0020)
+                if slot in ("3", "4"):
+                    for i in range(17):
+                        di = (i * 289 + i * 17 + i) * 3
+                        self.assertEqual(nums[di:di + 3], p3_nums[di:di + 3])
+            if cct == 5500 and tint == 0:
+                self.assertGreater(tgt_xy[0], base65_xy[0])
+            elif cct == 7500 and tint == 0:
+                self.assertLess(tgt_xy[0], base65_xy[0])
+            self.assertGreater(base65_v60, 0.0)
 
     def test_old_external_default_cannot_shadow_measured_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -153,6 +235,28 @@ class ProfileTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "black < knee < peak"):
                 compiler.generate_qdcm_v3(NATIVE, ASSET, out, hdr_knee=448, hdr_peak=447)
             self.assertEqual(out.read_bytes(), b"old profile")
+            tpl = Path(tmp) / "tpl.json"
+            tpl.write_bytes(ASSET.read_bytes())
+            with self.assertRaisesRegex(ValueError, "separate from the template"):
+                compiler.generate_qdcm_v3(NATIVE, tpl, tpl)
+            self.assertEqual(tpl.read_bytes(), ASSET.read_bytes())
+            with patch.object(Path, "replace", side_effect=PermissionError("locked")):
+                with self.assertRaises(PermissionError):
+                    compiler.generate_qdcm_v3(NATIVE, ASSET, out)
+            self.assertEqual(out.read_bytes(), b"old profile")
+
+    def test_utf8_bom_rejected_consistently(self):
+        bommed = b"\xef\xbb\xbf" + ASSET.read_bytes()
+        with self.assertRaisesRegex(ValueError, "UTF-8 BOM"):
+            color_engine.validate_qdcm(bommed)
+
+    def test_empty_helper_output_cannot_succeed(self):
+        client = app.AdbClient()
+        st = app.DeviceStatus(serial="TEST")
+        with patch.object(client, "_helper", return_value=(0, "", "")):
+            ok, detail = client._apply(st, ["install", "profile.json"], False, reboot=True)
+            self.assertFalse(ok)
+            self.assertIn("without reporting", detail)
 
     def test_ti3_names_extra_table_and_missing_verification(self):
         lines = NATIVE.read_text().splitlines()
@@ -197,6 +301,98 @@ class ProfileTests(unittest.TestCase):
             self.assertAlmostEqual(sum(errors)/51, avg, places=4)
             self.assertAlmostEqual(max(errors), maximum, places=4)
             self.assertEqual(sum(v >= 2 for v in errors), count)
+
+    def test_root_script_generation_and_preset_bundle(self):
+        helper_bytes = HELPER.read_bytes()
+        d65_bytes = ASSET.read_bytes()
+        sh_a = root_script.build_install_root_script(helper_bytes, d65_bytes, cct=6500, tint=0)
+        sh_b = root_script.build_install_root_script(helper_bytes, d65_bytes, cct=6500, tint=0)
+        self.assertEqual(sh_a, sh_b)
+        self.assertLess(len(sh_a), root_script.MAX_AYA_ROOT_SCRIPT_BYTES)
+        # Single non-comment bootstrap line well under xsud's 1024-byte IPC command limit
+        exec_lines = [ln for ln in sh_a.decode("utf-8").splitlines() if ln.strip() and not ln.startswith("#")]
+        self.assertEqual(len(exec_lines), 1)
+        self.assertLess(len(exec_lines[0].encode("utf-8")), 512)
+        # Arbitrary custom label characters must not inject shell syntax or break single-line comments
+        tricky = root_script.build_install_root_script(
+            helper_bytes, d65_bytes, label_zh='bad"$(rm -rf /)"\nname.json', label_en="bad\nname.json"
+        )
+        tricky_exec = [ln for ln in tricky.decode("utf-8").splitlines() if ln.strip() and not ln.startswith("#")]
+        self.assertEqual(len(tricky_exec), 1)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "presets"
+            created = root_script.build_preset_bundle(ASSET, HELPER, out_dir)
+            self.assertEqual(len(created), 11)
+            sh_files = [p for p in created if p.suffix == ".sh"]
+            self.assertEqual(len(sh_files), 10)
+            for p in created:
+                self.assertNotIn(" ", p.name)
+                self.assertLess(p.stat().st_size, root_script.MAX_AYA_ROOT_SCRIPT_BYTES)
+            # Export must never overwrite protected project files
+            base_copy = Path(tmp) / "base.json"
+            base_copy.write_bytes(d65_bytes)
+            helper_copy = Path(tmp) / "helper.sh"
+            helper_copy.write_bytes(helper_bytes)
+            with self.assertRaisesRegex(ValueError, "separate"):
+                app.export_root_script_file(base_copy, base_copy, 6500, 0, helper_path=helper_copy)
+            with self.assertRaisesRegex(ValueError, "separate"):
+                app.export_root_script_file(base_copy, helper_copy, 6500, 0, helper_path=helper_copy)
+            with self.assertRaisesRegex(ValueError, "separate"):
+                app.export_root_script_file(base_copy, base_copy, None, 0, helper_path=helper_copy)
+            # Release root-scripts archive helper packs all preset files + license notices
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("build_win_rel", ROOT / "scripts/build_windows_release.py")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            stage = Path(tmp) / "stage"
+            stage.mkdir()
+            bundle_dir, zip_path = mod.build_root_scripts_archive(ASSET, HELPER, stage, app.APP_VERSION)
+            self.assertTrue(bundle_dir.is_dir())
+            import zipfile
+            with zipfile.ZipFile(zip_path) as zf:
+                names = set(zf.namelist())
+            prefix = f"Fit8E-ColorCalib-v{app.APP_VERSION}-root-scripts/"
+            self.assertIn(prefix + "01_Fit8E_安装校色_6500K_D65标准.sh", names)
+            self.assertIn(prefix + "11_Fit8E_切换模式3_自适应鲜艳.sh", names)
+            self.assertIn(prefix + "99_Fit8E_卸载还原原厂.sh", names)
+            self.assertIn(prefix + "使用说明_README.txt", names)
+            self.assertIn(prefix + "LICENSE", names)
+
+    def test_cli_export_script_and_presets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tdir = Path(tmp)
+            inst_sh = tdir / "inst.sh"
+            custom_json = tdir / "custom.json"
+            custom_json.write_bytes(color_engine.synthesize_qdcm_bytes(ASSET, 6800, -1)[0])
+            custom_sh = tdir / "custom.sh"
+            mode_sh = tdir / "mode3.sh"
+            st_sh = tdir / "status.sh"
+            un_sh = tdir / "uninstall.sh"
+            preset_dir = tdir / "pack"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(app.run_cli(["export-script", "--cct", "6000", "--tint", "-2", "--out", str(inst_sh)]), 0)
+                self.assertEqual(app.run_cli(["export-script", "--json", str(custom_json), "--out", str(custom_sh)]), 0)
+                self.assertEqual(app.run_cli(["export-script", "--action", "mode", "--mode", "3", "--out", str(mode_sh)]), 0)
+                self.assertEqual(app.run_cli(["export-script", "--action", "status", "--out", str(st_sh)]), 0)
+                self.assertEqual(app.run_cli(["export-script", "--action", "uninstall", "--out", str(un_sh)]), 0)
+                self.assertEqual(app.run_cli(["export-presets", "--out-dir", str(preset_dir)]), 0)
+            for p in (inst_sh, custom_sh, mode_sh, st_sh, un_sh):
+                self.assertTrue(p.is_file())
+                self.assertLess(p.stat().st_size, root_script.MAX_AYA_ROOT_SCRIPT_BYTES)
+            self.assertEqual(len(list(preset_dir.iterdir())), 11)
+            bad_out = tdir / "bad.sh"
+            for bad_args in (
+                ["export-script", "--action", "mode", "--out", str(bad_out)],
+                ["export-script", "--action", "install", "--mode", "3", "--out", str(bad_out)],
+                ["export-script", "--action", "status", "--cct", "6000", "--out", str(bad_out)],
+                ["export-script", "--json", str(custom_json), "--tint", "1", "--out", str(bad_out)],
+                ["export-script", "--cct", "9000", "--out", str(bad_out)],
+            ):
+                with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(io.StringIO()):
+                    app.run_cli(bad_args)
+                self.assertEqual(caught.exception.code, 2)
+            self.assertFalse(bad_out.exists())
 
 
 class DeviceTests(unittest.TestCase):
@@ -293,17 +489,25 @@ esac''')
             if self.fail_reboot:
                 return reply(1, err="transport unavailable")
         elif args[:2] == ["shell", "-T"]:
-            self.assertEqual(stdin, self.script)
             call = shlex.split(args[2])
             as_root = call[0] in ("su","xsu")
             if as_root:
+                # Elevated OEM wrappers (like xsu) do not forward stdin; helper must be staged.
+                self.assertIsNone(stdin)
                 self.root_calls += 1
                 call = shlex.split(call[2])
-            self.assertEqual(call[:3], ["sh", "-s", "--"])
-            op, rest = call[3], call[4:]
+                self.assertEqual(call[0], "sh")
+                self.assertTrue(call[1].startswith("/data/local/tmp/fit8e-helper."))
+                staged = self.tmp / Path(call[1]).name
+                self.assertEqual(staged.read_bytes(), self.script)
+                op, rest = call[2], call[3:]
+            else:
+                self.assertEqual(stdin, self.script)
+                self.assertEqual(call[:3], ["sh", "-s", "--"])
+                op, rest = call[3], call[4:]
             if op == "probe" and self.bad_probe:
                 return reply(1, err="probe failed")
-            if op == "install" and self.deny_shell and not as_root:
+            if op in ("install", "uninstall") and self.deny_shell and not as_root:
                 return reply(73, err="cannot stage")
             rest = [(self.tmp / Path(v).name).as_posix() if v.startswith("/data/local/tmp/") else v for v in rest]
             env = self.env.copy()
@@ -313,9 +517,14 @@ esac''')
                 env["TEST_DEVICE"] = "other"
             p = self.device(op, *rest, env=env)
             return reply(p.returncode, p.stdout.decode(), p.stderr.decode())
-        elif args[0] == "shell" and args[1].startswith("mktemp "):
+        elif args[0] == "shell" and args[1].startswith("mktemp /data/local/tmp/fit8e-qdcm."):
             return reply(out="/data/local/tmp/fit8e-qdcm.abcdef12\n")
-        elif args[0] == "shell" and args[1].startswith("rm -f /data/local/tmp/fit8e-qdcm."):
+        elif args[0] == "shell" and args[1].startswith("mktemp /data/local/tmp/fit8e-helper."):
+            return reply(out="/data/local/tmp/fit8e-helper.abcdef12\n")
+        elif args[0] == "shell" and (
+            args[1].startswith("rm -f /data/local/tmp/fit8e-qdcm.")
+            or args[1].startswith("rm -f /data/local/tmp/fit8e-helper.")
+        ):
             (self.tmp / Path(args[1]).name).unlink(missing_ok=True)
         else:
             self.fail(f"Unexpected ADB command {args}")
@@ -471,7 +680,7 @@ esac''')
             self.assertFalse(self.client.install(p)[0])
             self.assertFalse(self.commands)
             self.assertNotEqual(self.device("install",p.as_posix()).returncode,0)
-        for change in ("truncated","out_of_range","unbound","wrong_panel"):
+        for change in ("truncated","out_of_range","unbound","wrong_panel","bad_enhance_intent","partial_enhance","missing_hdr_enhance"):
             data=json.loads(ASSET.read_bytes())
             if change=="wrong_panel":
                 data["other"]=data.pop(color_engine.PANEL_KEY)
@@ -480,6 +689,12 @@ esac''')
                 block=color_engine._dec_raw(mode["PostBlendGamut"])
                 block["Custom"]=9
                 mode["PostBlendGamut"]=color_engine._enc_obj(block)
+            elif change=="bad_enhance_intent":
+                data[color_engine.PANEL_KEY]["sRGB_Enhance"]["Applicability"]["RenderIntent"]=1
+            elif change=="partial_enhance":
+                del data[color_engine.PANEL_KEY]["HDR_Enhance"]
+            elif change=="missing_hdr_enhance":
+                data[color_engine.PANEL_KEY]["HDR_Enhance"]["PostBlendHdrBlob"]=color_engine._enc_obj({"blob":""})
             else:
                 block=color_engine._dec_raw(data["Common"]["PostBlendGC"])
                 values=block["Predefined"]["Rec601noDither"].rstrip(",").split(",")
@@ -492,6 +707,10 @@ esac''')
             self.custom.write_bytes(raw)
             self.assertNotEqual(self.device("validate",self.custom.as_posix()).returncode,0)
         self.assertFalse(self.target.exists())
+        # Mode 3 (Adaptive Vibrant) live switch works via both helper and AdbClient
+        self.assertTrue(self.client.set_mode(3)[0])
+        self.assertEqual(self.mode.read_text().strip(), "3")
+        self.assertFalse(self.client.set_mode(4)[0])
 
     def test_device_validator_decodes_chunk_boundaries_and_escaped_keys(self):
         doc = json.loads(self.adjusted)
@@ -536,13 +755,31 @@ esac''')
         self.assertEqual(self.target.read_bytes(),b"edited later")
 
     def test_controlled_privilege_retry_and_absent_initial_setting(self):
+        boot = self.tmp / "boot-id"
+        boot.write_text("boot-root-1")
         self.mode.write_text("null")
         self.deny_shell=True
         self.assertTrue(self.client.install(ASSET,reboot=False)[0])
         self.assertEqual(self.root_calls,1)
+        self.assertFalse((self.tmp / "fit8e-helper.abcdef12").exists())
         self.assertEqual((self.tmp / "root-attributes").read_text().splitlines(), ["chown", "chcon"])
+        # Activation state must remain readable by non-root probe after elevated install.
+        self.assertEqual(self.client.probe().activation, "pending")
+        if os.name != "nt":
+            self.assertEqual((self.display / ".fit8e-colorcalib").stat().st_mode & 0o777, 0o755)
+            self.assertEqual((self.display / ".fit8e-colorcalib/activation").stat().st_mode & 0o777, 0o644)
         self.assertTrue(self.client.uninstall(reboot=False)[0])
+        self.assertEqual(self.root_calls, 2)
         self.assertEqual(self.mode.read_text().strip(),"null")
+        # Root-created 0600 record/original must signal rc=73 so non-root desktop ADB retries elevated.
+        self.assertIn(b'[ -r "$record" ] || die 73', self.script)
+        self.assertIn(b'[ -r "$original" ] || die 73', self.script)
+
+    def test_shizuku_flags_without_positional_path(self):
+        p = self.device("install", "--sha256", "deadbeef")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn(b"/sdcard/Download/", p.stderr)
+        self.assertNotIn(b"Unknown argument", p.stderr)
 
     def test_shizuku_staging_failure_and_interrupted_commit_are_recoverable(self):
         self.target.write_bytes(b"original profile")
@@ -617,6 +854,67 @@ exec /usr/bin/mv "$@"''')
         self.assertEqual(p.returncode,5,p.stderr)
         self.assertFalse(self.target.exists())
 
+    def test_root_script_execution_and_line_by_line_guard(self):
+        # 1. Accidental "逐行运行" runs the single bootstrap line via `sh -c <line>` where $0 is not a file.
+        guard = self.bash(root_script._BOOTSTRAP_LINE)
+        self.assertEqual(guard.returncode, 1)
+        self.assertIn("整体运行", guard.stdout.decode("utf-8", "replace"))
+        self.assertFalse(self.target.exists())
+
+        # 2. Full isolated "整体运行" (sh <filePath>) lifecycle: install -> mode 3 -> status -> uninstall.
+        self.target.write_bytes(b"oem-stock-profile")
+        (self.tmp / "boot-id").write_text("boot-root-sh-1")
+        inst_raw = root_script.build_install_root_script(
+            self.isolated, self.adjusted, cct=6800, tint=-1, label_zh='6800K "safe" $(test)'
+        ).replace(b"/data/local/tmp/fit8e-root.XXXXXXXX", b"$FIT_TEST_DIR/fit8e-root.XXXXXXXX")
+        mode3_raw = root_script.build_action_root_script(
+            self.isolated, "mode", mode=3
+        ).replace(b"/data/local/tmp/fit8e-root.XXXXXXXX", b"$FIT_TEST_DIR/fit8e-root.XXXXXXXX")
+        status_raw = root_script.build_action_root_script(
+            self.isolated, "status"
+        ).replace(b"/data/local/tmp/fit8e-root.XXXXXXXX", b"$FIT_TEST_DIR/fit8e-root.XXXXXXXX")
+        uninst_raw = root_script.build_action_root_script(
+            self.isolated, "uninstall"
+        ).replace(b"/data/local/tmp/fit8e-root.XXXXXXXX", b"$FIT_TEST_DIR/fit8e-root.XXXXXXXX")
+
+        root_env = dict(self.env, TEST_ROOT="1")
+        for name, data in (
+            ("install.sh", inst_raw), ("mode3.sh", mode3_raw),
+            ("status.sh", status_raw), ("uninstall.sh", uninst_raw),
+        ):
+            (self.tmp / name).write_bytes(data)
+
+        p_inst = self.bash('sh "$1"', (self.tmp / "install.sh").as_posix(), env=root_env)
+        self.assertEqual(p_inst.returncode, 0, p_inst.stdout.decode("utf-8", "replace"))
+        inst_out = p_inst.stdout.decode("utf-8", "replace")
+        self.assertIn("安装成功", inst_out)
+        self.assertIn("手动重启掌机", inst_out)
+        self.assertIn('6800K "safe" $(test)', inst_out)
+        self.assertEqual(self.target.read_bytes(), self.adjusted)
+        self.assertEqual(self.mode.read_text().strip(), "0")
+        self.assertFalse(self.reboots)
+        self.assertEqual((self.tmp / "root-attributes").read_text().splitlines(), ["chown", "chcon"])
+
+        p_mode = self.bash('sh "$1"', (self.tmp / "mode3.sh").as_posix(), env=root_env)
+        self.assertEqual(p_mode.returncode, 0, p_mode.stdout.decode("utf-8", "replace"))
+        self.assertIn("切换成功", p_mode.stdout.decode("utf-8", "replace"))
+        self.assertEqual(self.mode.read_text().strip(), "3")
+
+        p_st = self.bash('sh "$1"', (self.tmp / "status.sh").as_posix(), env=root_env)
+        self.assertEqual(p_st.returncode, 0, p_st.stdout.decode("utf-8", "replace"))
+        st_out = p_st.stdout.decode("utf-8", "replace")
+        self.assertIn("Target match: yes", st_out)
+        self.assertIn("查询完成", st_out)
+
+        p_un = self.bash('sh "$1"', (self.tmp / "uninstall.sh").as_posix(), env=root_env)
+        self.assertEqual(p_un.returncode, 0, p_un.stdout.decode("utf-8", "replace"))
+        un_out = p_un.stdout.decode("utf-8", "replace")
+        self.assertIn("还原成功", un_out)
+        self.assertIn("手动重启掌机", un_out)
+        self.assertEqual(self.target.read_bytes(), b"oem-stock-profile")
+        self.assertEqual(self.mode.read_text().strip(), "2")
+        self.assertFalse(self.reboots)
+
 
 
 class GuiTests(unittest.TestCase):
@@ -662,6 +960,25 @@ class GuiTests(unittest.TestCase):
                     self.assertEqual(error.call_count, 2)
                     info.assert_not_called()
                 window._toggle_lang()
+                window._render_status(app.DeviceStatus(adb_path=None))
+                self.assertEqual(window.status_pill.cget("text"), "ADB Missing")
+                window.selected_json = None
+                window._update_profile_label()
+                self.assertEqual(window.lbl_prof_v.cget("text"), "(Calibration JSON missing)")
+                window.selected_json = ASSET
+                window._render_status(ready)
+                with patch.object(window.client, "probe", side_effect=AssertionError("should not probe rebooting device")), \
+                     patch.object(window.client, "install", return_value=(True, "Profile installed. Reboot requested.")), \
+                     patch.object(window.client, "uninstall", return_value=(True, "Restored. Reboot requested.")), \
+                     patch.object(messagebox, "askyesno", return_value=True), \
+                     patch.object(messagebox, "showinfo") as info, patch.object(messagebox, "showerror") as error:
+                    window._do_install(reboot=True)
+                    self.assertEqual(window.status.state, "disconnected")
+                    window._render_status(ready)
+                    window._do_uninstall()
+                    self.assertEqual(window.status.state, "disconnected")
+                    self.assertEqual(info.call_count, 2)
+                    error.assert_not_called()
                 window.tint_var.set(6)
                 window._select_preset(6500)
                 self.assertEqual(window.tint_var.get(), 0)
@@ -669,6 +986,44 @@ class GuiTests(unittest.TestCase):
                 self.assertIn("2015", window._current_profile_desc())
                 window._select_preset(6800)
                 self.assertEqual(window.cct_var.get(), 6800)
+                # All 4 color mode cards (including Mode 3 Adaptive Vibrant) render & highlight cleanly
+                self.assertEqual(set(window.mode_cards.keys()), {0, 1, 2, 3})
+                window._highlight_mode(3)
+                self.assertEqual(window.active_mode_id, 3)
+                self.assertEqual(window.mode_cards[3]["title"].cget("text"), "Adaptive")
+                self.assertEqual(window.btn_export_sh.cget("text"), "Export Root .sh")
+                window.update_idletasks()
+                self.assertLessEqual(window.btn_export_sh.master.winfo_reqwidth(), window.winfo_reqwidth())
+                # Export Root Script flow works for both tuned built-in and custom JSON
+                from tkinter import filedialog
+                with tempfile.TemporaryDirectory() as tmp:
+                    out_tuned = Path(tmp) / "Fit8E_6800K.sh"
+                    with patch.object(filedialog, "asksaveasfilename", return_value=str(out_tuned)), \
+                         patch.object(messagebox, "showinfo") as info, \
+                         patch.object(messagebox, "showerror") as err:
+                        window._export_root_script()
+                        self.assertEqual(info.call_count, 1)
+                        err.assert_not_called()
+                    self.assertTrue(out_tuned.is_file())
+                    self.assertLess(out_tuned.stat().st_size, root_script.MAX_AYA_ROOT_SCRIPT_BYTES)
+                    custom_src = Path(tmp) / "custom_calib.json"
+                    custom_src.write_bytes(ASSET.read_bytes())
+                    out_custom = Path(tmp) / "Fit8E_custom.sh"
+                    window.selected_json = custom_src
+                    window.is_custom_json = True
+                    window._set_wp_controls_enabled(False)
+                    self.assertEqual(str(window.btn_export_sh["state"]), "normal")
+                    with patch.object(filedialog, "asksaveasfilename", return_value=str(out_custom)), \
+                         patch.object(messagebox, "showinfo") as info, \
+                         patch.object(messagebox, "showerror") as err:
+                        window._export_root_script()
+                        self.assertEqual(info.call_count, 1)
+                        err.assert_not_called()
+                    self.assertTrue(out_custom.is_file())
+                    window._reset_profile()
+                window._toggle_lang()
+                self.assertEqual(window.mode_cards[3]["title"].cget("text"), "自适应鲜艳")
+                self.assertEqual(window.btn_export_sh.cget("text"), "导出 Root 脚本")
             finally:
                 window.destroy()
         with patch.object(tk.Tk, "__init__", hidden), patch.object(tk.Tk, "mainloop", exercise), \

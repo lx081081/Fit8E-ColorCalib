@@ -16,12 +16,19 @@ import math
 import sys
 from pathlib import Path
 
-from build_qdcm_v3 import M_P3, M_SRGB, characterize_panel, load_ti3
+from build_qdcm_v3 import (
+    M_P3,
+    M_SRGB,
+    characterize_panel,
+    load_ti3,
+    transform_p3_enhance_to_p3 as _transform_p3_enhance_to_p3,
+    transform_srgb_enhance_to_p3 as _transform_srgb_enhance_to_p3,
+)
 
 PANEL_KEY = "ar14_1080p_144hz_video_mode_dsi_panel"
 D65_XY = (0.3134524493261819, 0.33080182802444436)
 D65_XYZ = [100 * D65_XY[0] / D65_XY[1], 100.0, 100 * (1 - sum(D65_XY)) / D65_XY[1]]
-D65_PROFILE_SHA256 = "afb9547872edc21799b17d6e90f5df704cf4c3be069c1c893354210e4c28e8b6"
+D65_PROFILE_SHA256 = "18987308cfb4602159ee0a2f46bed55079663a3062ef6ef35a30c7f8db5beb9f"
 
 M_XYZ_TO_SRGB = [
     [ 3.2404542, -1.5371385, -0.4985314],
@@ -287,8 +294,12 @@ def _dec_raw(h: str, *, object_pairs_hook=None) -> dict:
     return json.loads(b.decode("utf-8"), object_pairs_hook=object_pairs_hook)
 
 
+BASE_MODES = ("sRGB", "P3", "HDR", "Native")
+ENHANCE_MODES = ("sRGB_Enhance", "P3_Enhance", "HDR_Enhance")
+
+
 def validate_qdcm(raw: bytes) -> None:
-    """Validate the V3 panel profile and every curve referenced by its four modes."""
+    """Validate the V3 panel profile and every curve referenced by its active modes."""
     def unique_object(pairs):
         result = dict(pairs)
         if len(result) != len(pairs):
@@ -299,17 +310,26 @@ def validate_qdcm(raw: bytes) -> None:
         return _dec_raw(encoded, object_pairs_hook=unique_object)
 
     try:
+        if raw.startswith(b"\xef\xbb\xbf"):
+            raise ValueError("UTF-8 BOM is not supported; save the JSON as UTF-8 without BOM")
         doc = json.loads(raw, object_pairs_hook=unique_object)
         if doc["Version"] != 3:
             raise ValueError("expected QDCM Version 3")
         panel = doc[PANEL_KEY]
+        present_enhance = [m for m in ENHANCE_MODES if m in panel]
+        if present_enhance and len(present_enhance) != len(ENHANCE_MODES):
+            raise ValueError("incomplete Enhance mode set (expected sRGB_Enhance, P3_Enhance, HDR_Enhance)")
+        modes = BASE_MODES + (ENHANCE_MODES if present_enhance else ())
+        for m in present_enhance:
+            if panel[m]["Applicability"]["RenderIntent"] != 2:
+                raise ValueError(f"{m}: expected RenderIntent 2 (Enhance)")
         for name, size, limit in (("PostBlendIGC", 385, 65535), ("PostBlendGC", 1280, 1023),
                                   ("PostBlendGamut", 4913, 4095)):
             block = unpack(doc["Common"][name])
             if block["numEntries"] != size:
                 raise ValueError(f"{name}: wrong common entry count")
             checked = set()
-            for mode in ("sRGB", "P3", "HDR", "Native"):
+            for mode in modes:
                 binding = unpack(panel[mode][name])
                 if binding["enable"] is not True or binding["numEntries"] != size:
                     raise ValueError(f"{mode}/{name}: disabled or wrong entry count")
@@ -328,9 +348,11 @@ def validate_qdcm(raw: bytes) -> None:
                 if len(samples) != count or any(not n.isascii() or not n.isdecimal() or int(n) > limit for n in samples):
                     raise ValueError(f"{mode}/{name}: invalid LUT length or sample")
                 checked.add(key)
-        hdr = unpack(panel["HDR"]["PostBlendHdrBlob"])["blob"]
-        if not isinstance(hdr, str) or not hdr:
-            raise ValueError("missing HDR configuration")
+        hdr_modes = ("HDR", "HDR_Enhance") if present_enhance else ("HDR",)
+        for hm in hdr_modes:
+            hdr = unpack(panel[hm]["PostBlendHdrBlob"])["blob"]
+            if not isinstance(hdr, str) or not hdr:
+                raise ValueError(f"{hm}: missing HDR configuration")
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"Invalid Fit 8E QDCM profile: {exc}") from exc
 
@@ -440,6 +462,39 @@ def _build_gamut_csv(M_map: list[list[float]]) -> str:
     return ",".join(vals) + ","
 
 
+def _build_adaptive_gamut_csv(M_p3_map: list[list[float]], transform_fn) -> str:
+    inv0, inv1, inv2 = _INV_TRC[0].eval, _INV_TRC[1].eval, _INV_TRC[2].eval
+    fwd = _FWD_LUM.eval
+    m00, m01, m02 = M_p3_map[0]
+    m10, m11, m12 = M_p3_map[1]
+    m20, m21, m22 = M_p3_map[2]
+    vals: list[str] = []
+    append = vals.append
+    for b_i in range(17):
+        b = b_i / 16.0
+        for g_i in range(17):
+            g = g_i / 16.0
+            for r_i in range(17):
+                r = r_i / 16.0
+                pr, pg, pb = transform_fn((r, g, b))
+                y0 = m00 * pr + m01 * pg + m02 * pb
+                y1 = m10 * pr + m11 * pg + m12 * pb
+                y2 = m20 * pr + m21 * pg + m22 * pb
+                y0 = 0.0 if y0 < 0.0 else (1.0 if y0 > 1.0 else y0)
+                y1 = 0.0 if y1 < 0.0 else (1.0 if y1 > 1.0 else y1)
+                y2 = 0.0 if y2 < 0.0 else (1.0 if y2 > 1.0 else y2)
+                u0 = fwd(inv0(y0))
+                u1 = fwd(inv1(y1))
+                u2 = fwd(inv2(y2))
+                u0 = 0.0 if u0 < 0.0 else (1.0 if u0 > 1.0 else u0)
+                u1 = 0.0 if u1 < 0.0 else (1.0 if u1 > 1.0 else u1)
+                u2 = 0.0 if u2 < 0.0 else (1.0 if u2 > 1.0 else u2)
+                append(str(int(round(u0 * 4095.0))))
+                append(str(int(round(u1 * 4095.0))))
+                append(str(int(round(u2 * 4095.0))))
+    return ",".join(vals) + ","
+
+
 def synthesize_qdcm_bytes(base_json_path: Path, cct: int = 6500, tint: int = 0) -> tuple[bytes, dict]:
     """
     Generate a complete SM8750P V3 HPM QDCM JSON adapted to (cct, tint).
@@ -466,12 +521,18 @@ def synthesize_qdcm_bytes(base_json_path: Path, cct: int = 6500, tint: int = 0) 
     ]
 
     doc = json.loads(base_json_path.read_text(encoding="utf-8", errors="replace"), strict=False)
+    panel = doc[PANEL_KEY]
+    has_enhance = all(m in panel for m in ENHANCE_MODES)
+    custom_luts = {
+        "0": _build_gamut_csv(M_native_map),
+        "1": _build_gamut_csv(M_p3_map),
+        "2": _build_gamut_csv(M_srgb_map),
+    }
+    if has_enhance:
+        custom_luts["3"] = _build_adaptive_gamut_csv(M_p3_map, _transform_p3_enhance_to_p3)
+        custom_luts["4"] = _build_adaptive_gamut_csv(M_p3_map, _transform_srgb_enhance_to_p3)
     common_gamut = {
-        "Custom": {
-            "0": _build_gamut_csv(M_native_map),
-            "1": _build_gamut_csv(M_p3_map),
-            "2": _build_gamut_csv(M_srgb_map),
-        },
+        "Custom": custom_luts,
         "numEntries": 4913,
     }
     doc["Common"]["PostBlendGamut"] = _enc_obj(common_gamut)
@@ -480,7 +541,10 @@ def synthesize_qdcm_bytes(base_json_path: Path, cct: int = 6500, tint: int = 0) 
     hdr_ratio = scale_p3 / REF_P3_SCALE_D65
     hdr_peak = round(REF_HDR_PEAK * hdr_ratio, 1)
     hdr_knee = round(REF_HDR_KNEE * hdr_ratio, 1)
-    doc[PANEL_KEY]["HDR"]["PostBlendHdrBlob"] = _enc_obj(_build_hdr_blob(hdr_peak, hdr_knee, REF_HDR_MIN))
+    hdr_blob_enc = _enc_obj(_build_hdr_blob(hdr_peak, hdr_knee, REF_HDR_MIN))
+    panel["HDR"]["PostBlendHdrBlob"] = hdr_blob_enc
+    if has_enhance:
+        panel["HDR_Enhance"]["PostBlendHdrBlob"] = hdr_blob_enc
 
     raw = json.dumps(doc, indent="\t").encode("utf-8")
     return raw, preview

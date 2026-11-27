@@ -47,15 +47,21 @@ jobs:
           Invoke-WebRequest -Uri "https://dl.google.com/android/repository/platform-tools-latest-windows.zip" -OutFile "platform-tools.zip"
           Expand-Archive -Path "platform-tools.zip" -DestinationPath "." -Force
 
-      - name: Build Windows portable package
+      - name: Run profile regression tests (Windows)
         shell: pwsh
-        run: python scripts/build_windows_release.py --platform-tools platform-tools
+        run: python -B -m unittest tests.test_regressions.ProfileTests -v
 
-      - name: Upload Windows artifact
+      - name: Build Windows portable package & Root Scripts bundle
+        shell: pwsh
+        run: python -B scripts/build_windows_release.py --platform-tools platform-tools
+
+      - name: Upload Windows & Root Scripts artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Fit8E-ColorCalib-win64
-          path: release/Fit8E-ColorCalib-v${{ needs.version.outputs.number }}-win64.zip
+          name: Fit8E-ColorCalib-win64-and-root-scripts
+          path: |
+            release/Fit8E-ColorCalib-v${{ needs.version.outputs.number }}-win64.zip
+            release/Fit8E-ColorCalib-v${{ needs.version.outputs.number }}-root-scripts.zip
 
   build-unix-source:
     needs: version
@@ -64,6 +70,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Run full regression test suite
+        run: python3 -B -m unittest discover -s tests -v
+
       - name: Package macOS / Linux / Shizuku archive
         env:
           VER: ${{ needs.version.outputs.number }}
@@ -71,7 +80,7 @@ jobs:
           PKG="Fit8E-ColorCalib-v${VER}-macos-linux-shizuku"
           mkdir -p "release/${PKG}"
           cp -r src assets scripts tests reference README.md README_EN.md CHANGELOG.md LICENSE LICENSES THIRD_PARTY_NOTICES.md "release/${PKG}/"
-          chmod +x "release/${PKG}/src/fit8e_color_tool.py" "release/${PKG}/src/build_qdcm_v3.py" "release/${PKG}/scripts/fit8e_calib_shizuku.sh"
+          chmod +x "release/${PKG}/src/fit8e_color_tool.py" "release/${PKG}/src/build_qdcm_v3.py" "release/${PKG}/src/root_script.py" "release/${PKG}/scripts/fit8e_calib_shizuku.sh"
           (cd release && zip -r "${PKG}.zip" "${PKG}")
 
       - name: Upload Unix artifact

@@ -16,8 +16,9 @@ digest() {
     printf '%s\n' "${line%% *}"
 }
 bundled_profile() {
-    # Current measured D65, plus both byte-exact variants of the legacy project profile.
+    # Current measured D65 (with Mode 3 Adaptive Vibrant), previous 2015 D65, plus legacy project profiles.
     case "$1" in
+        18987308cfb4602159ee0a2f46bed55079663a3062ef6ef35a30c7f8db5beb9f) return 0 ;;
         afb9547872edc21799b17d6e90f5df704cf4c3be069c1c893354210e4c28e8b6) return 0 ;;
         3eb02edeb1dfb62032a1f13843ce94547fcc636391967735e6d3c40fe90aa219|13baac65dce0dfc1de09fc29fd6d6d5e478943aa6e0f231f519772f3d5475e63) return 0 ;;
         *) return 1 ;;
@@ -111,7 +112,7 @@ function check_block(name,count,limit,    base,m,bind,ref,i,mode) {
     base="shared" SUBSEP name
     decode("profile" SUBSEP "Common" SUBSEP name,base)
     if (field(base SUBSEP "numEntries","number")+0!=count) fail(name " size")
-    for (i=1;i<=4;i++) {
+    for (i=1;i<=mode_count;i++) {
         mode=modes[i]; m="profile" SUBSEP panel SUBSEP mode; bind="binding" SUBSEP mode SUBSEP name
         decode(m SUBSEP name,bind)
         if (field(bind SUBSEP "enable","literal")!="true" || field(bind SUBSEP "numEntries","number")+0!=count) fail(mode " " name)
@@ -131,16 +132,34 @@ BEGIN {
     escapes["\""]="\""; escapes["\\"]="\\"; escapes["/"]="/"
     escapes["b"]="\b"; escapes["f"]="\f"; escapes["n"]="\n"; escapes["r"]="\r"; escapes["t"]="\t"
     split("sRGB P3 HDR Native",modes)
+    split("sRGB_Enhance P3_Enhance HDR_Enhance",enh_modes)
+    mode_count=4
 }
 { data=data $0 "\n" }
 END {
     parse(data,"profile")
     if (field("profile" SUBSEP "Version","number")+0!=3) fail("requires Version 3")
+    enh_found=0
+    for (i=1;i<=3;i++) {
+        if (("profile" SUBSEP panel SUBSEP enh_modes[i]) in kind) enh_found++
+    }
+    if (enh_found>0 && enh_found!=3) fail("incomplete Enhance mode set")
+    if (enh_found==3) {
+        for (i=1;i<=3;i++) {
+            em=enh_modes[i]
+            if (field("profile" SUBSEP panel SUBSEP em SUBSEP "Applicability" SUBSEP "RenderIntent","number")+0!=2) fail(em " requires RenderIntent 2")
+            modes[++mode_count]=em
+        }
+    }
     check_block("PostBlendIGC",385,65535)
     check_block("PostBlendGC",1280,1023)
     check_block("PostBlendGamut",4913,4095)
     decode("profile" SUBSEP panel SUBSEP "HDR" SUBSEP "PostBlendHdrBlob","hdr")
     if (!length(field("hdr" SUBSEP "blob","string"))) fail("missing HDR configuration")
+    if (enh_found==3) {
+        decode("profile" SUBSEP panel SUBSEP "HDR_Enhance" SUBSEP "PostBlendHdrBlob","hdr_enh")
+        if (!length(field("hdr_enh" SUBSEP "blob","string"))) fail("missing HDR_Enhance configuration")
+    }
 }
 ' "$1"
 }
@@ -287,6 +306,7 @@ save_record() {
         mv -f "$state_dir/record.next" "$record" || die 73 "Cannot save installation record"
 }
 read_record() {
+    [ -r "$record" ] || die 73 "Installation record requires elevated permissions"
     IFS=' ' read -r base base_mode old pending extra < "$record" || die 3 "Unreadable installation record"
     [ -z "$extra" ] && is_hash_or_empty "$base" && is_hash_or_empty "$old" &&
         is_hash_or_empty "$pending" && printf '%s\n' "$base_mode" | grep -Eq '^(null|-?[0-9]+)$' ||
@@ -295,6 +315,7 @@ read_record() {
         die 3 "The active file changed outside this tool. It was preserved."
     fi
     if [ "$base" != '-' ]; then
+        [ -r "$original" ] || die 73 "Original backup requires elevated permissions"
         backup_hash=$(digest "$original") && [ "$backup_hash" = "$base" ] || die 3 "Original backup is missing or damaged"
     fi
 }
@@ -341,6 +362,10 @@ install_profile() {
     boot=$(boot_id) || boot=''
     printf '%s %s\n' "$want" "$boot" > "$state_dir/activation.next" &&
         mv -f "$state_dir/activation.next" "$state_dir/activation" || die 73 "Cannot record the installation boot"
+    if [ "$(id -u)" = 0 ]; then
+        chmod 0755 "$state_dir" || die 73 "Cannot set installation state directory permissions"
+        chmod 0644 "$state_dir/activation" || die 73 "Cannot set installation boot record permissions"
+    fi
     mv -f "$stage" "$target" || die 73 "Could not activate staged profile"
     stage=''
     save_record "$want" "$want"
@@ -400,10 +425,10 @@ case "$op" in
             /DisplayColorSetting:|Current color mode:|ColorMode::/{print}
             END{if(h) printf "Activation: %s\n",(activation?activation:"unconfirmed")}'
         exit $? ;;
-    install) src="/sdcard/Download/$panel_file"; if [ "$#" -gt 0 ] && [ "$1" != --force ]; then src=$1; shift; fi ;;
-    uninstall) if [ "$#" -gt 0 ] && [ "$1" != --force ]; then proof=$1; shift; fi ;;
-    mode) mode=${1:-}; case "$mode" in 0|1|2) shift ;; *) die 1 "Usage: mode 0|1|2" ;; esac ;;
-    *) die 1 "Usage: status | install [profile.json] | mode 0|1|2 | uninstall [legacy.json]" ;;
+    install) src="/sdcard/Download/$panel_file"; case "${1:-}" in ''|--*) ;; *) src=$1; shift ;; esac ;;
+    uninstall) case "${1:-}" in ''|--*) ;; *) proof=$1; shift ;; esac ;;
+    mode) mode=${1:-}; case "$mode" in 0|1|2|3) shift ;; *) die 1 "Usage: mode 0|1|2|3" ;; esac ;;
+    *) die 1 "Usage: status | install [profile.json] | mode 0|1|2|3 | uninstall [legacy.json]" ;;
 esac
 while [ "$#" -gt 0 ]; do
     case "$1" in
