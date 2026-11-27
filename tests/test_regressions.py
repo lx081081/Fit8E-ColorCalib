@@ -185,6 +185,32 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(wrong.returncode, 2)
         self.assertIn(app.APP_VERSION.encode(), wrong.stderr)
 
+    def test_release_notes_extractor_matches_changelog(self):
+        script = ROOT / "scripts" / "extract_release_notes.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "notes.md"
+            ok = subprocess.run(
+                [sys.executable, "-B", str(script), "--version", app.APP_VERSION, "--out", str(out)],
+                capture_output=True,
+            )
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            body = out.read_text(encoding="utf-8")
+            tag = f"v{app.APP_VERSION}"
+            for required in (
+                f"Fit8E-ColorCalib-{tag}-win64.zip",
+                f"Fit8E-ColorCalib-{tag}-root-scripts.zip",
+                f"Fit8E-ColorCalib-{tag}-macos-linux-shizuku.zip",
+                "### English summary",
+                f"/blob/{tag}/CHANGELOG.md",
+            ):
+                self.assertIn(required, body)
+            self.assertNotIn("## 0.1.1", body)
+        missing = subprocess.run(
+            [sys.executable, "-B", str(script), "--version", "9.9.9-missing"],
+            capture_output=True,
+        )
+        self.assertEqual(missing.returncode, 2)
+
     def test_profile_timeout_reports_pending_work_without_retrying(self):
         client = app.AdbClient(language="zh")
         st = app.DeviceStatus(serial="TEST", has_root_tool="su")
